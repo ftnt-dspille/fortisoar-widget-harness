@@ -171,6 +171,95 @@
       .display-flex-space-between { display: flex; justify-content: space-between; align-items: center; }
       .position-relative { position: relative; }
       .position-absolute { position: absolute; }
+
+      /* Context wrappers — applied to the widget mount per harness context. */
+      .harness-frame.ctx-viewpanel #widget-host {
+        max-width: 880px;
+        margin: 0 auto;
+        padding: 12px 16px;
+      }
+      .harness-frame.ctx-drawer {
+        background: transparent;
+        border: 0;
+        margin: 0;
+        min-height: 0;
+        position: relative;
+        height: 100vh;
+      }
+      .harness-frame.ctx-drawer #widget-host {
+        position: fixed;
+        top: 0;
+        right: 0;
+        width: 480px;
+        height: 100vh;
+        background: #fff;
+        border-left: 1px solid #dfe3e8;
+        box-shadow: -4px 0 14px rgba(0, 0, 0, 0.18);
+        overflow: auto;
+        padding: 16px;
+        z-index: 50;
+      }
+      body.theme-dark .harness-frame.ctx-drawer #widget-host {
+        background: #252526;
+        border-left-color: #3c3c3c;
+      }
+      .harness-record-header {
+        font-size: 12px;
+        padding: 6px 12px;
+        background: rgba(0, 0, 0, 0.05);
+        border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+        margin-bottom: 8px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      body.theme-dark .harness-record-header {
+        background: rgba(255, 255, 255, 0.05);
+        border-bottom-color: rgba(255, 255, 255, 0.1);
+      }
+      .harness-record-header .err { color: #d9534f; }
+
+      /* Edit-config modal */
+      .harness-modal-backdrop {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.45);
+        z-index: 100;
+      }
+      .harness-modal-backdrop.open { display: flex; align-items: flex-start; justify-content: center; }
+      .harness-modal {
+        margin-top: 60px;
+        background: #fff;
+        color: #1b1f24;
+        width: 720px;
+        max-width: 90vw;
+        max-height: 80vh;
+        overflow: auto;
+        border-radius: 6px;
+        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+        display: flex;
+        flex-direction: column;
+      }
+      body.theme-dark .harness-modal { background: #252526; color: #dcdcdc; }
+      .harness-modal-head {
+        padding: 12px 16px;
+        font-weight: 600;
+        border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .harness-modal-body {
+        padding: 16px;
+        overflow: auto;
+      }
+      .harness-modal-foot {
+        padding: 10px 16px;
+        border-top: 1px solid rgba(0, 0, 0, 0.1);
+        display: flex;
+        gap: 8px;
+        justify-content: flex-end;
+      }
+      .harness-dvc { width: 100%; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
     </style>
   </head>
   <body>
@@ -185,6 +274,7 @@
         <select id="ctx">
           <option value="dashboard">Dashboard</option>
           <option value="viewpanel">View Panel</option>
+          <option value="drawer">Drawer</option>
         </select>
       </label>
       <label id="vp-fields" style="display: none">
@@ -206,6 +296,10 @@
         <input type="checkbox" id="load-fsr-css" />
         Load FortiSOAR CSS
       </label>
+      <button id="edit-config" class="btn btn-sm btn-default" style="padding: 2px 10px"
+              title="Open the widget's edit.html in a modal and update its config">
+        Edit config
+      </button>
       <button id="package-toggle" class="btn btn-sm btn-default" style="padding: 2px 10px">
         Package
       </button>
@@ -236,13 +330,30 @@
 
     <div id="harness-toasts" class="harness-toasts"></div>
 
-    <div class="harness-frame">
+    <div id="harness-frame" class="harness-frame">
+      <div id="record-header" class="harness-record-header" style="display: none"></div>
       <div id="widget-host">
         <div class="harness-empty">loading…</div>
       </div>
     </div>
 
+    <div id="edit-modal-backdrop" class="harness-modal-backdrop">
+      <div class="harness-modal">
+        <div class="harness-modal-head">
+          <span>Edit widget config</span>
+          <button id="edit-modal-close" class="btn btn-xs btn-default" type="button">close</button>
+        </div>
+        <div id="edit-modal-body" class="harness-modal-body"></div>
+        <div class="harness-modal-foot">
+          <span id="edit-modal-status" style="opacity: 0.7; font-size: 12px; margin-right: auto"></span>
+          <button id="edit-modal-cancel" class="btn btn-sm btn-default" type="button">Cancel</button>
+          <button id="edit-modal-save" class="btn btn-sm btn-primary" type="button">Save</button>
+        </div>
+      </div>
+    </div>
+
     <script src="https://cdnjs.cloudflare.com/ajax/libs/angular.js/1.8.3/angular.min.js"></script>
+    <script src="/lib/harnessUtils.js"></script>
 
     <script>
       function setEmpty(host, text) {
@@ -262,6 +373,10 @@
         const loadCssEl = document.getElementById("load-fsr-css");
         const host = document.getElementById("widget-host");
 
+        const HU = window.HarnessUtils;
+        const frame = document.getElementById("harness-frame");
+        const recordHeader = document.getElementById("record-header");
+
         ctxSel.value = localStorage.getItem("harness.ctx") || "dashboard";
         modEl.value = localStorage.getItem("harness.module") || "alerts";
         idEl.value = localStorage.getItem("harness.id") || "";
@@ -271,9 +386,10 @@
         document.getElementById("harness-theme").value = initialTheme;
         document.body.classList.toggle("theme-dark", initialTheme !== "light");
         document.body.classList.toggle("theme-light", initialTheme === "light");
-        vpFields.style.display = ctxSel.value === "viewpanel" ? "" : "none";
+        function ctxNeedsRecord(ctx) { return ctx === "viewpanel" || ctx === "drawer"; }
+        vpFields.style.display = ctxNeedsRecord(ctxSel.value) ? "" : "none";
         ctxSel.addEventListener("change", () => {
-          vpFields.style.display = ctxSel.value === "viewpanel" ? "" : "none";
+          vpFields.style.display = ctxNeedsRecord(ctxSel.value) ? "" : "none";
         });
 
         const pkgPanel = document.getElementById("package-panel");
@@ -518,18 +634,6 @@
         const current = widgets.find((w) => w.id === currentId);
 
         window.__HARNESS_THEME_ID = document.getElementById("harness-theme").value;
-        window.__HARNESS_CONFIG = {
-          title: current.title,
-          module: modEl.value || "alerts",
-          defaultTemplate: "",
-        };
-        window.__HARNESS_STATE =
-          ctxSel.value === "viewpanel"
-            ? {
-                current: { name: "viewPanel.modulesDetail" },
-                params: { module: modEl.value, id: idEl.value },
-              }
-            : { current: { name: "main.dashboard" }, params: {} };
 
         if (loadCssEl.checked) {
           await injectFsrStylesheets();
@@ -539,42 +643,186 @@
         await preloadMonaco();
         await loadScript("/" + current.id + "/view.controller.js");
 
-        while (host.firstChild) host.removeChild(host.firstChild);
-        // view.html no longer has data-ng-controller (matches SOAR widget
-        // convention — SOAR's csWidgetContent directive wires the controller
-        // at install time). Wrap the ng-include here with the dev-suffixed
-        // name our source controllers register under.
-        const ctrlName =
-          current.name + current.version.split(".").join("") + "DevCtrl";
-        const wrap = document.createElement("div");
-        wrap.setAttribute("ng-controller", ctrlName);
-        const inc = document.createElement("div");
-        inc.setAttribute("ng-include", "'/" + current.id + "/view.html'");
-        wrap.appendChild(inc);
-        host.appendChild(wrap);
-        const $injector = angular.bootstrap(host, ["cybersponse"]);
-        const $rootScope = $injector.get("$rootScope");
-
-        // Wire the theme dropdown to $rootScope.theme after bootstrap so
-        // widgets that watch $rootScope.theme.id react to live changes.
-        // Use $apply (not $applyAsync) — change fires outside Angular so we
-        // need to synchronously kick off a digest to trigger watches.
-        const themeSelect = document.getElementById("harness-theme");
-        function applyHarnessTheme(id) {
-          document.body.classList.toggle("theme-dark", id !== "light");
-          document.body.classList.toggle("theme-light", id === "light");
-          // Guard against calling $apply while a digest is already in progress
-          // (can happen if a $timeout or $http response is being processed).
-          if ($rootScope.$$phase) {
-            $rootScope.theme = { id: id };
-          } else {
-            $rootScope.$apply(function () {
-              $rootScope.theme = { id: id };
-            });
+        function setRecordHeader(parts) {
+          while (recordHeader.firstChild) recordHeader.removeChild(recordHeader.firstChild);
+          for (const p of parts) {
+            if (typeof p === "string") {
+              recordHeader.appendChild(document.createTextNode(p));
+            } else {
+              const span = document.createElement("span");
+              if (p.cls) span.className = p.cls;
+              span.textContent = p.text;
+              recordHeader.appendChild(span);
+            }
           }
         }
+
+        async function applyContext(ctx) {
+          frame.classList.remove("ctx-dashboard", "ctx-viewpanel", "ctx-drawer");
+          frame.classList.add("ctx-" + ctx);
+          if (!ctxNeedsRecord(ctx)) {
+            recordHeader.style.display = "none";
+            setRecordHeader([]);
+            return null;
+          }
+          const m = (modEl.value || "").trim();
+          const i = (idEl.value || "").trim();
+          recordHeader.style.display = "";
+          if (!m || !i) {
+            setRecordHeader([
+              { cls: "err", text: "no record loaded" },
+              " — fill module and id in the toolbar",
+            ]);
+            return null;
+          }
+          setRecordHeader(["loading " + m + "/" + i + "…"]);
+          try {
+            const r = await fetch(HU.recordFetchPath(m, i, true));
+            if (!r.ok) throw new Error("HTTP " + r.status);
+            const rec = await r.json();
+            const label = (rec && (rec.name || rec["@id"] || rec.uuid)) || i;
+            setRecordHeader(["record: " + m + " / " + String(label)]);
+            return rec;
+          } catch (e) {
+            setRecordHeader([{ cls: "err", text: "record fetch failed: " + e.message }]);
+            return null;
+          }
+        }
+
+        let currentInjector = null;
+        async function mountWidget() {
+          const ctx = ctxSel.value;
+          const record = await applyContext(ctx);
+
+          let savedConfig = null;
+          try {
+            const raw = localStorage.getItem(HU.configStorageKey(current.id));
+            if (raw) savedConfig = JSON.parse(raw);
+          } catch (_) {}
+
+          window.__HARNESS_RECORD = record || undefined;
+          window.__HARNESS_CONFIG = HU.mergeConfig(
+            { title: current.title, module: modEl.value || "alerts", defaultTemplate: "" },
+            savedConfig
+          );
+          window.__HARNESS_STATE = HU.stateForContext(ctx, {
+            module: modEl.value,
+            id: idEl.value,
+          });
+
+          if (currentInjector) {
+            try { currentInjector.get("$rootScope").$destroy(); } catch (_) {}
+          }
+          while (host.firstChild) host.removeChild(host.firstChild);
+
+          const ctrlName = HU.deriveControllerName(current.name, current.version);
+          const wrap = document.createElement("div");
+          wrap.setAttribute("ng-controller", ctrlName);
+          const inc = document.createElement("div");
+          inc.setAttribute("ng-include", "'/" + current.id + "/view.html'");
+          wrap.appendChild(inc);
+          host.appendChild(wrap);
+          currentInjector = angular.bootstrap(wrap, ["cybersponse"]);
+
+          const $rootScope = currentInjector.get("$rootScope");
+          window.__harnessApplyTheme = function (id) {
+            document.body.classList.toggle("theme-dark", id !== "light");
+            document.body.classList.toggle("theme-light", id === "light");
+            if ($rootScope.$$phase) {
+              $rootScope.theme = { id: id };
+            } else {
+              $rootScope.$apply(function () { $rootScope.theme = { id: id }; });
+            }
+          };
+        }
+
+        await mountWidget();
+
+        const themeSelect = document.getElementById("harness-theme");
         themeSelect.addEventListener("change", function () {
-          applyHarnessTheme(themeSelect.value);
+          if (window.__harnessApplyTheme) window.__harnessApplyTheme(themeSelect.value);
+        });
+
+        // ---------------- Edit-config modal ----------------
+        const editBtn = document.getElementById("edit-config");
+        const modalBackdrop = document.getElementById("edit-modal-backdrop");
+        const modalBody = document.getElementById("edit-modal-body");
+        const modalStatus = document.getElementById("edit-modal-status");
+        const modalSave = document.getElementById("edit-modal-save");
+        const modalCancel = document.getElementById("edit-modal-cancel");
+        const modalClose = document.getElementById("edit-modal-close");
+        let editInjector = null;
+
+        function closeEditModal() {
+          modalBackdrop.classList.remove("open");
+          if (editInjector) {
+            try { editInjector.get("$rootScope").$destroy(); } catch (_) {}
+            editInjector = null;
+          }
+          while (modalBody.firstChild) modalBody.removeChild(modalBody.firstChild);
+          modalStatus.textContent = "";
+        }
+
+        editBtn.addEventListener("click", async () => {
+          modalStatus.textContent = "loading edit form…";
+          modalBackdrop.classList.add("open");
+          try {
+            await loadScript("/" + current.id + "/edit.controller.js");
+            const editCtrlName = HU.deriveEditControllerName(current.name, current.version);
+
+            let saved = null;
+            try {
+              const raw = localStorage.getItem(HU.configStorageKey(current.id));
+              if (raw) saved = JSON.parse(raw);
+            } catch (_) {}
+            window.__HARNESS_CONFIG = HU.mergeConfig(window.__HARNESS_CONFIG, saved);
+
+            const editWrap = document.createElement("div");
+            editWrap.setAttribute("ng-controller", editCtrlName);
+            const inc = document.createElement("div");
+            inc.setAttribute("ng-include", "'/" + current.id + "/edit.html'");
+            editWrap.appendChild(inc);
+            while (modalBody.firstChild) modalBody.removeChild(modalBody.firstChild);
+            modalBody.appendChild(editWrap);
+            editInjector = angular.bootstrap(editWrap, ["cybersponse"]);
+            modalStatus.textContent = "";
+          } catch (e) {
+            modalStatus.textContent = "open failed: " + e.message;
+          }
+        });
+
+        modalCancel.addEventListener("click", closeEditModal);
+        modalClose.addEventListener("click", closeEditModal);
+        modalBackdrop.addEventListener("click", (e) => {
+          if (e.target === modalBackdrop) closeEditModal();
+        });
+
+        modalSave.addEventListener("click", async () => {
+          if (!editInjector) return closeEditModal();
+          modalStatus.textContent = "saving…";
+          try {
+            const wrap = modalBody.firstChild;
+            const scope =
+              (wrap && wrap.firstChild && angular.element(wrap.firstChild).scope()) ||
+              (wrap && angular.element(wrap).scope());
+            const cfg = scope && scope.config;
+            if (cfg && typeof cfg === "object") {
+              localStorage.setItem(HU.configStorageKey(current.id), JSON.stringify(cfg));
+            }
+            closeEditModal();
+            await mountWidget();
+          } catch (e) {
+            modalStatus.textContent = "save failed: " + e.message;
+          }
+        });
+
+        // Re-mount when the user changes context or record without reloading.
+        ctxSel.addEventListener("change", () => mountWidget().catch(console.error));
+        document.getElementById("vp-module").addEventListener("change", () => {
+          if (ctxNeedsRecord(ctxSel.value)) mountWidget().catch(console.error);
+        });
+        document.getElementById("vp-id").addEventListener("change", () => {
+          if (ctxNeedsRecord(ctxSel.value)) mountWidget().catch(console.error);
         });
       })().catch((e) => {
         setEmpty(

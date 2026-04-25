@@ -18,6 +18,12 @@
   // window.__HARNESS_THEME_ID is set by index.html just before loadScript.
   app.run(["$rootScope", function ($rootScope) {
     $rootScope.theme = { id: window.__HARNESS_THEME_ID || "dark" };
+    // window.__HARNESS_RECORD is the current View Panel / Drawer record, set
+    // by index.html before bootstrap. Exposed on $rootScope so widgets that
+    // walk parent scopes for `record` find it the same way they do in SOAR.
+    if (window.__HARNESS_RECORD) {
+      $rootScope.record = window.__HARNESS_RECORD;
+    }
   }]);
 
   app.factory("$state", function () {
@@ -51,6 +57,33 @@
       };
     },
   ]);
+
+  // Stub for the angular-ui-bootstrap modal instance. In SOAR, edit forms run
+  // inside a $uibModal, so their controllers inject $uibModalInstance and
+  // call .close()/.dismiss() to wire up the bootstrap modal Save/Cancel
+  // buttons. The harness exposes its own Save/Cancel in the modal chrome,
+  // so these stubs are no-ops — Save/Cancel in the harness toolbar drives
+  // the persist + remount path instead.
+  app.factory("$uibModalInstance", function () {
+    return {
+      close: function () {},
+      dismiss: function () {},
+      result: { then: function () {}, catch: function () {} },
+    };
+  });
+
+  // Minimal stand-in for SOAR's Entity resource service. Edit forms typically
+  // use it to look up referenced records (e.g. dropdowns of saved templates).
+  // A no-op constructor keeps controllers from blowing up on instantiation;
+  // widgets that actually call methods will get clear errors so the gap is
+  // discoverable rather than silent.
+  app.factory("Entity", function () {
+    function Entity() {}
+    Entity.prototype.query = function () { return { $promise: Promise.resolve([]) }; };
+    Entity.prototype.get = function () { return { $promise: Promise.resolve({}) }; };
+    Entity.prototype.save = function () { return { $promise: Promise.resolve({}) }; };
+    return Entity;
+  });
 
   app.factory("CommonUtils", [
     "$window",
@@ -127,6 +160,23 @@
   // hook for programmatic value resets. Expects `window.monaco` to exist
   // at link time — the widget gates the directive behind `ng-if="monacoReady"`
   // after its own ensure() resolves, so that holds.
+  // Stand-in for SOAR's `dynamicValueChooser` directive, used heavily in
+  // edit forms to let users pick fields off the current record. Real SOAR
+  // pops a tree picker; the harness gives a textarea bound two-way to the
+  // model so dev users can type Jinja-style expressions like
+  // {{vars.input.records[0].source.host}} and exercise the round-trip.
+  app.directive("dynamicValueChooser", function () {
+    return {
+      restrict: "EA",
+      scope: { ngModel: "=", placeholder: "@?" },
+      template:
+        '<textarea class="harness-dvc form-control" rows="2" ' +
+        '          ng-model="ngModel" ' +
+        '          placeholder="{{ placeholder || \'{{ jinja or record.path }}\' }}">' +
+        "</textarea>",
+    };
+  });
+
   app.directive("monacoEditor", [
     "$timeout",
     function ($timeout) {
