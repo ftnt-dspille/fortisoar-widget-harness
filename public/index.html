@@ -1,0 +1,588 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>FortiSOAR widget dev harness</title>
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css"
+    />
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/bootstrap@3.4.1/dist/css/bootstrap.min.css"
+    />
+    <style>
+      body {
+        font-family: -apple-system, system-ui, sans-serif;
+        margin: 0;
+        background: #f5f6f8;
+        color: #1b1f24;
+      }
+      body.theme-dark {
+        background: #1b1f24;
+        color: #dcdcdc;
+      }
+      body.theme-dark .harness-frame {
+        background: #252526;
+        border-color: #3c3c3c;
+        color: #dcdcdc;
+      }
+      body.theme-dark .harness-empty {
+        color: #9da5b4;
+      }
+      .harness-bar {
+        background: #1b1f24;
+        color: #eee;
+        padding: 10px 16px;
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        font-size: 13px;
+        flex-wrap: wrap;
+      }
+      .harness-bar label {
+        margin: 0;
+        font-weight: normal;
+        display: flex;
+        gap: 6px;
+        align-items: center;
+      }
+      .harness-bar input,
+      .harness-bar select {
+        background: #2b313a;
+        color: #eee;
+        border: 1px solid #3a4049;
+        padding: 4px 8px;
+        border-radius: 3px;
+        font-size: 12px;
+      }
+      .harness-bar .spacer { flex: 1; }
+      .harness-frame {
+        background: #fff;
+        margin: 16px;
+        border: 1px solid #dfe3e8;
+        border-radius: 4px;
+        min-height: 500px;
+      }
+      .harness-empty {
+        padding: 60px;
+        text-align: center;
+        color: #666;
+        font-size: 14px;
+      }
+      .harness-toasts {
+        position: fixed;
+        top: 60px;
+        right: 16px;
+        z-index: 10000;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .harness-toast {
+        padding: 8px 12px;
+        border-radius: 3px;
+        color: #fff;
+        font-size: 12px;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+      }
+      .harness-toast-success { background: #5cb85c; }
+      .harness-toast-error   { background: #d9534f; }
+      .harness-toast-warning { background: #f0ad4e; }
+      .harness-toast-info    { background: #5bc0de; }
+      .harness-json-view {
+        background: #f7f7f9;
+        border: 1px solid #e5e5e5;
+        padding: 8px;
+        font-size: 12px;
+        max-height: 400px;
+        overflow: auto;
+        border-radius: 3px;
+      }
+      .harness-spinner { font-size: 22px; color: #555; }
+      .harness-package-panel {
+        background: #242932;
+        color: #eee;
+        padding: 10px 16px;
+        display: none;
+        gap: 10px;
+        align-items: center;
+        font-size: 12px;
+        border-top: 1px solid #3a4049;
+        flex-wrap: wrap;
+      }
+      .harness-package-panel.open { display: flex; }
+      .harness-package-panel input {
+        background: #2b313a;
+        color: #eee;
+        border: 1px solid #3a4049;
+        padding: 4px 8px;
+        border-radius: 3px;
+        font-size: 12px;
+        width: 100px;
+      }
+      .harness-package-panel .current-version {
+        opacity: 0.75;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      .harness-package-panel .group {
+        display: flex;
+        gap: 4px;
+        align-items: center;
+      }
+      body.theme-light {
+        background: #f5f6f8 !important;
+        color: #1b1f24 !important;
+      }
+      body.theme-light .harness-bar {
+        background: #f0f2f5;
+        color: #1b1f24;
+        border-bottom: 1px solid #d0d4da;
+      }
+      body.theme-light .harness-bar input,
+      body.theme-light .harness-bar select {
+        background: #ffffff;
+        color: #1b1f24;
+        border-color: #c0c5cc;
+      }
+      body.theme-light .harness-frame {
+        background: #ffffff;
+        border-color: #d0d4da;
+      }
+      body.theme-light .harness-package-panel {
+        background: #e8eaed;
+        color: #1b1f24;
+        border-top-color: #c0c5cc;
+      }
+      body.theme-light .harness-package-panel input {
+        background: #ffffff;
+        color: #1b1f24;
+        border-color: #c0c5cc;
+      }
+      body.theme-light .harness-empty {
+        color: #555;
+      }
+      .muted-65 { color: rgba(0, 0, 0, 0.55); }
+      body.theme-dark .muted-65 { color: rgba(220, 220, 220, 0.6); }
+      .font-size-12 { font-size: 12px; }
+      .font-size-16 { font-size: 16px; }
+      .text-overflow { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .margin-chart { margin: 0; }
+      .display-flex-space-between { display: flex; justify-content: space-between; align-items: center; }
+      .position-relative { position: relative; }
+      .position-absolute { position: absolute; }
+    </style>
+  </head>
+  <body>
+    <div class="harness-bar">
+      <strong>Widget dev harness</strong>
+      <label>
+        Widget
+        <select id="widget-select"></select>
+      </label>
+      <label>
+        Context
+        <select id="ctx">
+          <option value="dashboard">Dashboard</option>
+          <option value="viewpanel">View Panel</option>
+        </select>
+      </label>
+      <label id="vp-fields" style="display: none">
+        module <input id="vp-module" value="alerts" size="10" />
+        id <input id="vp-id" size="36" placeholder="uuid" />
+      </label>
+      <button id="reload" class="btn btn-sm btn-primary" style="padding: 2px 10px">
+        Reload
+      </button>
+      <label>
+        Theme
+        <select id="harness-theme">
+          <option value="dark" selected>dark</option>
+          <option value="light">light</option>
+          <option value="navy">navy</option>
+        </select>
+      </label>
+      <label>
+        <input type="checkbox" id="load-fsr-css" />
+        Load FortiSOAR CSS
+      </label>
+      <button id="package-toggle" class="btn btn-sm btn-default" style="padding: 2px 10px">
+        Package
+      </button>
+      <span class="spacer"></span>
+      <span style="opacity: 0.6; font-size: 11px">proxy → FortiSOAR</span>
+    </div>
+
+    <div id="package-panel" class="harness-package-panel">
+      <span>current <span id="pkg-current" class="current-version">—</span></span>
+      <div class="group">
+        <label>new version <input id="pkg-version" size="10" /></label>
+      </div>
+      <div class="group">
+        bump
+        <button id="pkg-bump-patch" class="btn btn-xs btn-default" type="button">patch</button>
+        <button id="pkg-bump-minor" class="btn btn-xs btn-default" type="button">minor</button>
+        <button id="pkg-bump-major" class="btn btn-xs btn-default" type="button">major</button>
+      </div>
+      <button id="pkg-build" class="btn btn-sm btn-success" type="button" style="padding: 2px 10px">
+        Package &amp; Download
+      </button>
+      <button id="pkg-install" class="btn btn-sm btn-primary" type="button" style="padding: 2px 10px"
+              title="Package, upload, and publish to FortiSOAR in one shot">
+        Install to SOAR
+      </button>
+      <span id="pkg-status" style="opacity: 0.75"></span>
+    </div>
+
+    <div id="harness-toasts" class="harness-toasts"></div>
+
+    <div class="harness-frame">
+      <div id="widget-host">
+        <div class="harness-empty">loading…</div>
+      </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/angular.js/1.8.3/angular.min.js"></script>
+
+    <script>
+      function setEmpty(host, text) {
+        while (host.firstChild) host.removeChild(host.firstChild);
+        const d = document.createElement("div");
+        d.className = "harness-empty";
+        d.textContent = text;
+        host.appendChild(d);
+      }
+
+      (async function () {
+        const widgetSelect = document.getElementById("widget-select");
+        const ctxSel = document.getElementById("ctx");
+        const vpFields = document.getElementById("vp-fields");
+        const modEl = document.getElementById("vp-module");
+        const idEl = document.getElementById("vp-id");
+        const loadCssEl = document.getElementById("load-fsr-css");
+        const host = document.getElementById("widget-host");
+
+        ctxSel.value = localStorage.getItem("harness.ctx") || "dashboard";
+        modEl.value = localStorage.getItem("harness.module") || "alerts";
+        idEl.value = localStorage.getItem("harness.id") || "";
+        const savedFsrCss = localStorage.getItem("harness.fsrCss");
+        loadCssEl.checked = savedFsrCss === null ? true : savedFsrCss === "1";
+        const initialTheme = localStorage.getItem("harness.theme") || "dark";
+        document.getElementById("harness-theme").value = initialTheme;
+        document.body.classList.toggle("theme-dark", initialTheme !== "light");
+        document.body.classList.toggle("theme-light", initialTheme === "light");
+        vpFields.style.display = ctxSel.value === "viewpanel" ? "" : "none";
+        ctxSel.addEventListener("change", () => {
+          vpFields.style.display = ctxSel.value === "viewpanel" ? "" : "none";
+        });
+
+        const pkgPanel = document.getElementById("package-panel");
+        const pkgToggle = document.getElementById("package-toggle");
+        const pkgCurrent = document.getElementById("pkg-current");
+        const pkgVersion = document.getElementById("pkg-version");
+        const pkgBuild = document.getElementById("pkg-build");
+        const pkgStatus = document.getElementById("pkg-status");
+
+        function bumpParts(v, part) {
+          const parts = String(v || "0.0.0").split(".").map((n) => parseInt(n, 10) || 0);
+          while (parts.length < 3) parts.push(0);
+          if (part === "major") { parts[0]++; parts[1] = 0; parts[2] = 0; }
+          else if (part === "minor") { parts[1]++; parts[2] = 0; }
+          else { parts[2]++; }
+          return parts.slice(0, 3).join(".");
+        }
+
+        // After a successful package/install that bumps the version, the server's
+        // widgetsById map hot-reloads to the new ID but the browser's <select> still
+        // holds the old value. Patch the option in place so subsequent requests
+        // (/_fsr/install/<id>, /_fsr/package/<id>) use the correct ID.
+        function updateWidgetSelectId(oldId, newId) {
+          if (!oldId || !newId || oldId === newId) return;
+          const opt = Array.from(widgetSelect.options).find((o) => o.value === oldId);
+          if (opt) {
+            opt.value = newId;
+            opt.textContent = opt.textContent.replace(oldId, newId);
+          }
+          if (widgetSelect.value === oldId) widgetSelect.value = newId;
+        }
+
+        async function loadPackageInfo() {
+          pkgStatus.textContent = "";
+          try {
+            const id = widgetSelect.value;
+            const r = await fetch("/_fsr/package/" + encodeURIComponent(id) + "/info");
+            if (!r.ok) throw new Error("HTTP " + r.status);
+            const info = await r.json();
+            pkgCurrent.textContent = info.version;
+            pkgVersion.value = info.version;
+          } catch (e) {
+            pkgCurrent.textContent = "?";
+            pkgStatus.textContent = "info failed: " + e.message;
+          }
+        }
+
+        pkgToggle.addEventListener("click", async () => {
+          pkgPanel.classList.toggle("open");
+          if (pkgPanel.classList.contains("open")) await loadPackageInfo();
+        });
+
+        widgetSelect.addEventListener("change", () => {
+          if (pkgPanel.classList.contains("open")) loadPackageInfo();
+        });
+
+        document.getElementById("pkg-bump-patch").addEventListener("click", () => {
+          pkgVersion.value = bumpParts(pkgCurrent.textContent, "patch");
+        });
+        document.getElementById("pkg-bump-minor").addEventListener("click", () => {
+          pkgVersion.value = bumpParts(pkgCurrent.textContent, "minor");
+        });
+        document.getElementById("pkg-bump-major").addEventListener("click", () => {
+          pkgVersion.value = bumpParts(pkgCurrent.textContent, "major");
+        });
+
+        const pkgInstall = document.getElementById("pkg-install");
+        pkgInstall.addEventListener("click", async () => {
+          const id = widgetSelect.value;
+          const requested = (pkgVersion.value || "").trim();
+          const body = {};
+          if (requested && /^\d+(\.\d+){0,2}$/.test(requested)) {
+            body.version = requested;
+          } else if (requested) {
+            pkgStatus.textContent = "invalid version";
+            return;
+          }
+          pkgInstall.disabled = true;
+          pkgBuild.disabled = true;
+          pkgStatus.textContent = "uploading…";
+          try {
+            const r = await fetch("/_fsr/install/" + encodeURIComponent(id), {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(body),
+            });
+            const payload = await r.json().catch(() => ({}));
+            if (!r.ok) throw new Error(payload.error || "HTTP " + r.status);
+            const newInstallId = payload.name + "-" + payload.version;
+            updateWidgetSelectId(id, newInstallId);
+            pkgCurrent.textContent = payload.version;
+            pkgVersion.value = payload.version;
+            pkgStatus.textContent =
+              "installed " + payload.name + "-" + payload.version + " (" + payload.uuid.slice(0, 8) + ")";
+          } catch (e) {
+            pkgStatus.textContent = "install failed: " + e.message;
+          } finally {
+            pkgInstall.disabled = false;
+            pkgBuild.disabled = false;
+          }
+        });
+
+        pkgBuild.addEventListener("click", async () => {
+          const id = widgetSelect.value;
+          const requested = (pkgVersion.value || "").trim();
+          if (!/^\d+(\.\d+){0,2}$/.test(requested)) {
+            pkgStatus.textContent = "invalid version";
+            return;
+          }
+          pkgBuild.disabled = true;
+          pkgStatus.textContent = "packaging…";
+          try {
+            const r = await fetch("/_fsr/package/" + encodeURIComponent(id), {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ version: requested }),
+            });
+            if (!r.ok) {
+              let msg = "HTTP " + r.status;
+              try { const err = await r.json(); if (err && err.error) msg = err.error; } catch (_) {}
+              throw new Error(msg);
+            }
+            const cd = r.headers.get("Content-Disposition") || "";
+            const m = cd.match(/filename="([^"]+)"/);
+            const filename = m ? m[1] : id + ".tgz";
+            const blob = await r.blob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            const newVersion = r.headers.get("X-Package-Version") || requested;
+            const widgetName = id.replace(/-\d+(?:\.\d+)*$/, "");
+            updateWidgetSelectId(id, widgetName + "-" + newVersion);
+            pkgCurrent.textContent = newVersion;
+            pkgStatus.textContent = "built " + filename;
+          } catch (e) {
+            pkgStatus.textContent = "failed: " + e.message;
+          } finally {
+            pkgBuild.disabled = false;
+          }
+        });
+
+        document.getElementById("reload").addEventListener("click", () => {
+          localStorage.setItem("harness.widget", widgetSelect.value);
+          localStorage.setItem("harness.ctx", ctxSel.value);
+          localStorage.setItem("harness.module", modEl.value);
+          localStorage.setItem("harness.id", idEl.value);
+          localStorage.setItem("harness.fsrCss", loadCssEl.checked ? "1" : "0");
+          localStorage.setItem("harness.theme", document.getElementById("harness-theme").value);
+          location.reload();
+        });
+
+        function loadScript(src) {
+          return new Promise((resolve, reject) => {
+            const s = document.createElement("script");
+            s.src = src;
+            s.onload = () => resolve();
+            s.onerror = () => reject(new Error("failed to load " + src));
+            document.head.appendChild(s);
+          });
+        }
+
+        // In SOAR, window.monaco is preloaded during app bootstrap
+        // (initMonacoEditorService). Our proxy forwards /node_modules/... to
+        // the SOAR host, so we can load Monaco's AMD bundle the same way
+        // here. Only needs to run once per tab; idempotent on repeat calls.
+        async function preloadMonaco() {
+          if (window.monaco) return window.monaco;
+          if (window.__harnessMonacoPromise) return window.__harnessMonacoPromise;
+          const VS = "/node_modules/monaco-editor/min/vs";
+          window.__harnessMonacoPromise = (async () => {
+            if (!window.require) await loadScript(VS + "/loader.js");
+            return new Promise((resolve, reject) => {
+              try {
+                window.require.config({
+                  paths: { vs: VS },
+                  "vs/nls": { availableLanguages: {} },
+                });
+                window.require(
+                  ["vs/editor/editor.main"],
+                  () => resolve(window.monaco),
+                  (err) =>
+                    reject(
+                      new Error(
+                        "Monaco require(editor.main) failed: " +
+                          ((err && (err.message || err.toString())) || "unknown")
+                      )
+                    )
+                );
+              } catch (e) {
+                reject(e);
+              }
+            });
+          })();
+          return window.__harnessMonacoPromise;
+        }
+
+        async function injectFsrStylesheets() {
+          try {
+            const r = await fetch("/_fsr/stylesheets");
+            if (!r.ok) {
+              console.warn("stylesheets endpoint failed:", r.status);
+              return;
+            }
+            const { stylesheets } = await r.json();
+            for (const href of stylesheets || []) {
+              const link = document.createElement("link");
+              link.rel = "stylesheet";
+              link.href = href;
+              document.head.appendChild(link);
+            }
+            console.log(`injected ${(stylesheets || []).length} FortiSOAR stylesheets`);
+          } catch (e) {
+            console.warn("failed to fetch FortiSOAR stylesheets:", e);
+          }
+        }
+
+        const widgetsRes = await fetch("/_fsr/widgets").then((r) => r.json());
+        const widgets = widgetsRes.widgets || [];
+        if (widgets.length === 0) {
+          setEmpty(
+            host,
+            "No widgets found in widgets-src/. Add a folder with info.json, view.html, and view.controller.js, then restart the server."
+          );
+          return;
+        }
+
+        const savedId = localStorage.getItem("harness.widget");
+        const currentId =
+          (widgets.find((w) => w.id === savedId) || widgets[0]).id;
+        for (const w of widgets) {
+          const opt = document.createElement("option");
+          opt.value = w.id;
+          opt.textContent = w.title + " (" + w.id + ")";
+          opt.selected = w.id === currentId;
+          widgetSelect.appendChild(opt);
+        }
+        const current = widgets.find((w) => w.id === currentId);
+
+        window.__HARNESS_THEME_ID = document.getElementById("harness-theme").value;
+        window.__HARNESS_CONFIG = {
+          title: current.title,
+          module: modEl.value || "alerts",
+          defaultTemplate: "",
+        };
+        window.__HARNESS_STATE =
+          ctxSel.value === "viewpanel"
+            ? {
+                current: { name: "viewPanel.modulesDetail" },
+                params: { module: modEl.value, id: idEl.value },
+              }
+            : { current: { name: "main.dashboard" }, params: {} };
+
+        if (loadCssEl.checked) {
+          await injectFsrStylesheets();
+        }
+
+        await loadScript("/harness.module.js");
+        await preloadMonaco();
+        await loadScript("/" + current.id + "/view.controller.js");
+
+        while (host.firstChild) host.removeChild(host.firstChild);
+        // view.html no longer has data-ng-controller (matches SOAR widget
+        // convention — SOAR's csWidgetContent directive wires the controller
+        // at install time). Wrap the ng-include here with the dev-suffixed
+        // name our source controllers register under.
+        const ctrlName =
+          current.name + current.version.split(".").join("") + "DevCtrl";
+        const wrap = document.createElement("div");
+        wrap.setAttribute("ng-controller", ctrlName);
+        const inc = document.createElement("div");
+        inc.setAttribute("ng-include", "'/" + current.id + "/view.html'");
+        wrap.appendChild(inc);
+        host.appendChild(wrap);
+        const $injector = angular.bootstrap(host, ["cybersponse"]);
+        const $rootScope = $injector.get("$rootScope");
+
+        // Wire the theme dropdown to $rootScope.theme after bootstrap so
+        // widgets that watch $rootScope.theme.id react to live changes.
+        // Use $apply (not $applyAsync) — change fires outside Angular so we
+        // need to synchronously kick off a digest to trigger watches.
+        const themeSelect = document.getElementById("harness-theme");
+        function applyHarnessTheme(id) {
+          document.body.classList.toggle("theme-dark", id !== "light");
+          document.body.classList.toggle("theme-light", id === "light");
+          // Guard against calling $apply while a digest is already in progress
+          // (can happen if a $timeout or $http response is being processed).
+          if ($rootScope.$$phase) {
+            $rootScope.theme = { id: id };
+          } else {
+            $rootScope.$apply(function () {
+              $rootScope.theme = { id: id };
+            });
+          }
+        }
+        themeSelect.addEventListener("change", function () {
+          applyHarnessTheme(themeSelect.value);
+        });
+      })().catch((e) => {
+        setEmpty(
+          document.getElementById("widget-host"),
+          "harness boot failed: " + (e && e.message ? e.message : String(e))
+        );
+        console.error(e);
+      });
+    </script>
+  </body>
+</html>
