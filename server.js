@@ -256,11 +256,16 @@ app.use(
   "/harness.module.js",
   express.static(path.resolve(__dirname, "harness.module.js"), { etag: false, cacheControl: false })
 );
+app.use(
+  "/lib",
+  express.static(path.resolve(__dirname, "lib"), { etag: false, cacheControl: false })
+);
 
 // Paths we serve locally; the proxy skips these.
 const LOCAL_PATHS = new Set(["/", "/index.html", "/harness.module.js"]);
 function isLocalPath(p) {
   if (LOCAL_PATHS.has(p)) return true;
+  if (p.startsWith("/lib/")) return true;
   for (const w of WIDGETS) if (p.startsWith(`/${w.id}/`)) return true;
   if (p.startsWith("/_fsr/")) return true;
   return false;
