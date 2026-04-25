@@ -2,8 +2,6 @@
 
 module.exports = {
   testEnvironment: "node",
-  testMatch: [
-    "<rootDir>/tests/server.test.js",
-    "<rootDir>/tests/packager.test.js",
-  ],
+  testMatch: ["<rootDir>/tests/**/*.test.js"],
+  testPathIgnorePatterns: ["<rootDir>/tests/e2e/"],
 };

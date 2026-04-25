@@ -12,7 +12,7 @@ const { app, isLocalPath, discoverWidgets, decodeJwtExpiryMs } = require("../ser
 // isLocalPath
 // ---------------------------------------------------------------------------
 describe("isLocalPath", () => {
-  test.each(["/", "/index.html", "/harness.module.js", "/_fsr/widgets", "/_fsr/package/foo/info"])(
+  test.each(["/", "/index.html", "/harness.module.js", "/lib/harnessUtils.js", "/_fsr/widgets", "/_fsr/package/foo/info"])(
     "returns true for local path %s",
     (p) => expect(isLocalPath(p)).toBe(true)
   );
@@ -155,6 +155,13 @@ describe("Static file serving", () => {
     expect(res.status).toBe(200);
     expect(res.headers["content-type"]).toMatch(/javascript/);
     expect(res.text).toContain("cybersponse");
+  });
+
+  test("GET /lib/harnessUtils.js serves the browser-side utilities", async () => {
+    const res = await request(app).get("/lib/harnessUtils.js");
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toMatch(/javascript/);
+    expect(res.text).toContain("HarnessUtils");
   });
 
   test("GET /<widget-id>/view.html serves the widget view template", async () => {
