@@ -1,0 +1,23 @@
+{
+  "name": "fortisoar-widget-harness",
+  "version": "0.1.0",
+  "description": "Local dev harness for FortiSOAR 7.x AngularJS widgets: render in isolation, proxy /api/* to a real instance, package + install with one click.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "jest",
+    "test:e2e": "playwright test",
+    "test:e2e:headed": "playwright test --headed"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "http-proxy-middleware": "^3.0.3"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.44.0",
+    "jest": "^29.7.0",
+    "supertest": "^7.0.0"
+  },
+  "license": "MIT"
+}

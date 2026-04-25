@@ -1,0 +1,34 @@
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Build / runtime output
+widget-packages/
+widgets-src/*
+!widgets-src/.gitkeep
+
+# OS
+.DS_Store
+._*
+__MACOSX/
+Thumbs.db
+
+# Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs
+*.log
+
+# Playwright
+test-results/
+playwright-report/
