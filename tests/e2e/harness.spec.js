@@ -525,3 +525,131 @@ test.describe("output pane", () => {
     await expect(page.locator("#jinja-widget-output.has-error-border")).toBeVisible({ timeout: 10000 });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Context switching — View Panel, Drawer, record fetch, edit modal
+// ---------------------------------------------------------------------------
+test.describe("context contexts", () => {
+  test("dashboard is the default context (no record header)", async ({ page }) => {
+    await setupPage(page);
+    await selectWidget(page);
+    await waitForWidgetReady(page);
+    const frame = page.locator("#harness-frame");
+    await expect(frame).toHaveClass(/ctx-dashboard/);
+    await expect(page.locator("#record-header")).toBeHidden();
+  });
+
+  test("View Panel: switching context applies wrapper class and surfaces module/id inputs", async ({ page }) => {
+    await setupPage(page);
+    await selectWidget(page);
+    await waitForWidgetReady(page);
+    await page.locator("#ctx").selectOption("viewpanel");
+    await expect(page.locator("#harness-frame")).toHaveClass(/ctx-viewpanel/);
+    await expect(page.locator("#vp-fields")).toBeVisible();
+  });
+
+  test("View Panel: filling module/id triggers a record fetch with the right URL", async ({ page }) => {
+    await setupPage(page);
+    // Re-route AFTER setupPage so this handler wins (Playwright route registration is LIFO).
+    let lastUrl = null;
+    await page.route(/\/api\/3\/(?!solutionpacks)/, (route) => {
+      lastUrl = route.request().url();
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ id: "abc-123", name: "Suspicious login" }),
+      });
+    });
+    await selectWidget(page);
+    await waitForWidgetReady(page);
+    await page.locator("#ctx").selectOption("viewpanel");
+    await page.locator("#vp-module").fill("alerts");
+    await page.locator("#vp-id").fill("abc-123");
+    await page.locator("#vp-id").press("Tab");
+
+    await expect(page.locator("#record-header")).toContainText("Suspicious login", { timeout: 10000 });
+    expect(lastUrl).toMatch(/\/api\/3\/alerts\/abc-123\?\$relationships=true$/);
+  });
+
+  test("View Panel: empty module/id surfaces a 'no record loaded' message", async ({ page }) => {
+    await setupPage(page);
+    // Force empty id via localStorage + reload so prior test runs don't leak in.
+    await page.evaluate(() => {
+      localStorage.setItem("harness.id", "");
+      localStorage.setItem("harness.module", "alerts");
+    });
+    await page.reload();
+    await selectWidget(page);
+    await waitForWidgetReady(page);
+    await page.locator("#ctx").selectOption("viewpanel");
+    await expect(page.locator("#record-header .err")).toContainText("no record loaded", { timeout: 5000 });
+  });
+
+  test("Drawer: applies ctx-drawer wrapper", async ({ page }) => {
+    await setupPage(page);
+    await selectWidget(page);
+    await waitForWidgetReady(page);
+    await page.locator("#ctx").selectOption("drawer");
+    await expect(page.locator("#harness-frame")).toHaveClass(/ctx-drawer/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Edit-config modal
+// ---------------------------------------------------------------------------
+test.describe("edit modal", () => {
+  test("Edit config button opens the modal and loads the edit form", async ({ page }) => {
+    await setupPage(page);
+    await selectWidget(page);
+    await waitForWidgetReady(page);
+    await page.locator("#edit-config").click();
+    await expect(page.locator("#edit-modal-backdrop.open")).toBeVisible({ timeout: 5000 });
+    // ng-include resolves async; wait for the title input the edit.html declares.
+    await expect(page.locator("#edit-modal-body #jinja-widget-title")).toBeVisible({ timeout: 10000 });
+  });
+
+  test("Cancel closes the modal without persisting config", async ({ page }) => {
+    await setupPage(page);
+    await selectWidget(page);
+    await waitForWidgetReady(page);
+    await page.locator("#edit-config").click();
+    await expect(page.locator("#edit-modal-backdrop.open")).toBeVisible({ timeout: 5000 });
+    await page.locator("#edit-modal-cancel").click();
+    await expect(page.locator("#edit-modal-backdrop.open")).toBeHidden();
+    // No config key written.
+    const stored = await page.evaluate(() => {
+      const keys = Object.keys(localStorage).filter((k) => k.startsWith("harness:config:"));
+      return keys.length;
+    });
+    expect(stored).toBe(0);
+  });
+
+  test("Save persists $scope.config to localStorage and re-mounts the widget", async ({ page }) => {
+    await setupPage(page);
+    await selectWidget(page);
+    await waitForWidgetReady(page);
+    await page.locator("#edit-config").click();
+    await expect(page.locator("#edit-modal-backdrop.open")).toBeVisible({ timeout: 5000 });
+
+    // Force a known shape onto the edit scope so the save path has something
+    // to snapshot — independent of whatever the real edit controller does.
+    await page.evaluate(() => {
+      const wrap = document.querySelector("#edit-modal-body > [ng-controller]");
+      if (!wrap) throw new Error("edit wrap not present");
+      const scope = angular.element(wrap.firstChild || wrap).scope() || angular.element(wrap).scope();
+      scope.$apply(() => { scope.config = { title: "from-test", probe: 42 }; });
+    });
+
+    await page.locator("#edit-modal-save").click();
+    await expect(page.locator("#edit-modal-backdrop.open")).toBeHidden({ timeout: 5000 });
+
+    const saved = await page.evaluate(() => {
+      const k = Object.keys(localStorage).find((x) => x.startsWith("harness:config:"));
+      return k ? JSON.parse(localStorage.getItem(k)) : null;
+    });
+    expect(saved).toMatchObject({ title: "from-test", probe: 42 });
+
+    // Widget remounts: container should still be there post-save.
+    await expect(page.locator(".jinja-editor-widget")).toBeVisible({ timeout: 10000 });
+  });
+});
