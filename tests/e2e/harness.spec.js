@@ -15,11 +15,19 @@ const MONACO_STUB = `
   function makeEditor(opts) {
     var val = (opts && opts.value) || '';
     var listeners = [];
+    var model = {
+      getLanguageId: function() { return (opts && opts.language) || 'text'; },
+      getLineContent: function(n) { return (editor._val.split('\\n')[n - 1]) || ''; },
+      getValueInRange: function() { return ''; },
+    };
     var editor = {
       _val: val,
       getValue: function() { return this._val; },
       setValue: function(v) { this._val = v; },
-      getModel: function() { return { getLanguageId: function() { return (opts && opts.language) || 'text'; } }; },
+      // Test hook: set the value AND fire change listeners (mimics user typing).
+      _typeValue: function(v) { this._val = v; listeners.forEach(function(fn) { fn({}); }); },
+      getModel: function() { return model; },
+      getPosition: function() { return { lineNumber: 1, column: 1 }; },
       getSelection: function() { return { startLineNumber:1, startColumn:1, endLineNumber:1, endColumn:1 }; },
       // Append text from edits and notify listeners so contentChange callbacks fire.
       executeEdits: function(src, edits) {
@@ -42,6 +50,9 @@ const MONACO_STUB = `
   }
   // Expose created editors by language so tests can inspect/patch _val.
   window.__monacoEditors = {};
+  // Capture setModelMarkers calls so tests can verify squiggle wiring without
+  // needing real Monaco's hover renderer. Indexed by owner string.
+  window.__monacoMarkers = {};
   window.monaco = {
     editor: {
       create: function(el, opts) {
@@ -52,7 +63,20 @@ const MONACO_STUB = `
       },
       defineTheme: function() {},
       setTheme: function() {},
+      setModelMarkers: function(model, owner, markers) {
+        window.__monacoMarkers[owner] = markers.slice();
+      },
+      getModelMarkers: function(filter) {
+        var owner = (filter && filter.owner) || null;
+        if (owner) return (window.__monacoMarkers[owner] || []).slice();
+        var all = [];
+        Object.keys(window.__monacoMarkers).forEach(function(k) {
+          all = all.concat(window.__monacoMarkers[k]);
+        });
+        return all;
+      },
     },
+    MarkerSeverity: { Hint: 1, Info: 2, Warning: 4, Error: 8 },
     languages: {
       register: function() {},
       setMonarchTokensProvider: function() {},
@@ -151,6 +175,10 @@ async function setTemplate(page, text = "Hello World") {
     if (!ctrlEl) return;
     const scope = angular.element(ctrlEl).scope();
     scope.$apply(function () { scope.templateText = t; });
+    // Submit() reads from templateEditor.getValue() first; ensure the editor
+    // stub's _val matches the scope so submit doesn't bail with "Template is required".
+    const ed = window.__monacoEditors && window.__monacoEditors["jinja"];
+    if (ed) ed._val = t;
   }, text);
 }
 
@@ -498,17 +526,36 @@ test.describe("filter palette insertion", () => {
 // Output pane — object result rendered as JSON
 // ---------------------------------------------------------------------------
 test.describe("output pane", () => {
-  test("output displays as formatted JSON when result is an object", async ({ page }) => {
+  test("output displays in the JSON Monaco pane when result is an object", async ({ page }) => {
     await setupPage(page, { jinaResult: { key: "value" } });
     await selectWidget(page);
     await waitForWidgetReady(page);
     await setTemplate(page);
     await page.locator(".render-btn").click();
 
-    // When output is an object, the view uses a <pre> with the json filter,
-    // not the textarea.
-    await expect(page.locator(".output-area pre")).toBeVisible({ timeout: 10000 });
+    // Object output -> JSON tab is auto-selected; raw textarea is hidden.
+    await expect(page.locator("#jinja-widget-output-json")).toBeVisible({ timeout: 10000 });
     await expect(page.locator("#jinja-widget-output")).not.toBeVisible();
+  });
+
+  test("HTML output auto-selects the HTML tab and renders into a sandboxed iframe", async ({ page }) => {
+    await setupPage(page, { jinaResult: "<table><tr><td>Ada</td></tr></table>" });
+    await selectWidget(page);
+    await waitForWidgetReady(page);
+    await setTemplate(page);
+    await page.locator(".render-btn").click();
+
+    const frame = page.locator(".jinja-html-preview-frame");
+    await expect(frame).toBeVisible({ timeout: 10000 });
+    // Empty sandbox attribute = no scripts, no same-origin, no form, no popups.
+    await expect(frame).toHaveAttribute("sandbox", "");
+    // contentDocument is unreadable from the parent (sandbox isolation), so
+    // verify the rendered HTML through the srcdoc attribute the directive set.
+    const srcdoc = await frame.getAttribute("srcdoc");
+    expect(srcdoc).toContain("<table>");
+    expect(srcdoc).toContain("Ada");
+    // Parent page stylesheets are mirrored into the preview <head>.
+    expect(srcdoc).toContain('<link rel="stylesheet"');
   });
 
   test("output textarea gets error-border class when render fails", async ({ page }) => {
@@ -651,5 +698,74 @@ test.describe("edit modal", () => {
 
     // Widget remounts: container should still be there post-save.
     await expect(page.locator(".jinja-editor-widget")).toBeVisible({ timeout: 10000 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Live squiggles — verify markers are set with messages and narrowed range
+// ---------------------------------------------------------------------------
+test.describe("live squiggles", () => {
+  test("typing an unclosed expression sets a marker with hover message and narrowed range", async ({ page }) => {
+    await setupPage(page);
+    await selectWidget(page);
+    await waitForWidgetReady(page);
+
+    // Type a broken template directly into the jinja editor and fire the
+    // change handler the controller subscribed via onDidChangeModelContent.
+    await page.evaluate(() => {
+      const ed = window.__monacoEditors && window.__monacoEditors["jinja"];
+      if (!ed) throw new Error("jinja editor not present");
+      ed._typeValue("Name:    {{ vars.input.records[0].name");
+    });
+
+    // Live scan is debounced 600ms inside the controller.
+    await page.waitForFunction(
+      () => {
+        const m = window.__monacoMarkers && window.__monacoMarkers["jinja-render"];
+        return m && m.length > 0;
+      },
+      null,
+      { timeout: 5000 }
+    );
+
+    const markers = await page.evaluate(() => window.__monacoMarkers["jinja-render"]);
+    const unclosed = markers.find((m) => /unclosed expression/i.test(m.message));
+    expect(unclosed).toBeDefined();
+    // Message is the hover text Monaco renders on the squiggle.
+    expect(unclosed.message).toMatch(/unclosed expression/i);
+    // Range narrowed to the {{ … span (col 10 = position of `{{`), not the
+    // whole "Name:    {{ …" line.
+    expect(unclosed.startColumn).toBe(10);
+    expect(unclosed.endColumn).toBe("Name:    {{ vars.input.records[0].name".length + 1);
+  });
+
+  test("fixing the template clears the markers", async ({ page }) => {
+    await setupPage(page);
+    await selectWidget(page);
+    await waitForWidgetReady(page);
+
+    await page.evaluate(() => {
+      window.__monacoEditors["jinja"]._typeValue("{{ vars.x");
+    });
+    await page.waitForFunction(
+      () => (window.__monacoMarkers["jinja-render"] || []).length > 0,
+      null,
+      { timeout: 5000 }
+    );
+
+    await page.evaluate(() => {
+      // Provide an input so path-existence check also resolves.
+      const scope = angular.element(document.querySelector("[ng-controller]")).scope();
+      scope.$apply(() => { scope.inputJsonText = '{"vars":{"x":1}}'; });
+      window.__monacoEditors["jinja"]._typeValue("{{ vars.x }}");
+    });
+
+    await page.waitForFunction(
+      () => (window.__monacoMarkers["jinja-render"] || []).length === 0,
+      null,
+      { timeout: 5000 }
+    );
+    const markers = await page.evaluate(() => window.__monacoMarkers["jinja-render"]);
+    expect(markers).toEqual([]);
   });
 });
