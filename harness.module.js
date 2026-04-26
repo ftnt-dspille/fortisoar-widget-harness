@@ -27,12 +27,13 @@
   }]);
 
   // `config` is normally provided by the widget template service on the host
-  // page. In the harness it's a value — set window.__HARNESS_CONFIG from the
-  // boot page to control it per widget. Defaults are safe for most cases.
-  app.value(
-    "config",
-    window.__HARNESS_CONFIG || { title: "(harness)", defaultTemplate: "" }
-  );
+  // page. In the harness it's read from window.__HARNESS_CONFIG, which the
+  // boot page rewrites before each angular.bootstrap (initial mount, edit
+  // modal open, post-save remount). Registered as a factory so each injector
+  // pulls the current global instead of the snapshot at module load.
+  app.factory("config", function () {
+    return window.__HARNESS_CONFIG || { title: "(harness)", defaultTemplate: "" };
+  });
 
   // Seed $rootScope.theme so widgets that read it at init time (before the
   // dropdown's post-bootstrap change event fires) get the right value.
@@ -103,6 +104,9 @@
     Entity.prototype.query = function () { return { $promise: Promise.resolve([]) }; };
     Entity.prototype.get = function () { return { $promise: Promise.resolve({}) }; };
     Entity.prototype.save = function () { return { $promise: Promise.resolve({}) }; };
+    Entity.prototype.loadFields = function () { return Promise.resolve({}); };
+    Entity.prototype.getFormFieldsArray = function () { return []; };
+    Entity.prototype.getRelationshipFields = function () { return []; };
     return Entity;
   });
 

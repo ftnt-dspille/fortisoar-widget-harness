@@ -217,6 +217,13 @@
       }
       .harness-record-header .err { color: #d9534f; }
 
+      /* The harness owns the modal chrome (header + Cancel/Save toolbar), so
+         hide whatever the widget's edit.html ships for those — otherwise we
+         get duplicate buttons and the embedded ones invoke the no-op
+         $uibModalInstance stub. */
+      #edit-modal-body .modal-footer,
+      #edit-modal-body .modal-header { display: none !important; }
+
       /* Edit-config modal */
       .harness-modal-backdrop {
         display: none;
