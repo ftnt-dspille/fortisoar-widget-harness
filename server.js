@@ -9,6 +9,7 @@
 require("dotenv").config();
 const fs = require("fs");
 const path = require("path");
+const HU = require("./lib/harnessUtils");
 const http = require("http");
 const https = require("https");
 const crypto = require("crypto");
@@ -196,6 +197,38 @@ const WIDGETS_SRC = process.env.WIDGETS_SRC
   ? path.resolve(process.env.WIDGETS_SRC)
   : path.resolve(__dirname, "widgets-src");
 
+// Files we scan for stale `<name>-<version>` references. The widget templates
+// frequently embed versioned paths (e.g. <link href="<name>-1.1.3/...">) that
+// must follow info.json's version, but get forgotten on a version bump.
+const VERSIONED_REF_FILES = ["view.html", "edit.html", "view.controller.js", "edit.controller.js"];
+
+function staleRefRegex(name) {
+  // Match `<name>-X.Y[.Z...]` -- capture the version portion so we can compare
+  // it against the current one. We don't include trailing slash so it picks
+  // up paths and bare identifiers alike.
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp("\\b" + escaped + "-(\\d+(?:\\.\\d+)+)", "g");
+}
+
+function scanStaleVersionRefs(widgetDir, name, version) {
+  const out = [];
+  const re = staleRefRegex(name);
+  for (const file of VERSIONED_REF_FILES) {
+    const p = path.join(widgetDir, file);
+    if (!fs.existsSync(p)) continue;
+    let src;
+    try { src = fs.readFileSync(p, "utf8"); } catch (_) { continue; }
+    const seen = new Set();
+    let m;
+    re.lastIndex = 0;
+    while ((m = re.exec(src)) !== null) {
+      if (m[1] !== version) seen.add(m[1]);
+    }
+    if (seen.size > 0) out.push({ file, staleVersions: Array.from(seen) });
+  }
+  return out;
+}
+
 function discoverWidgets() {
   if (!fs.existsSync(WIDGETS_SRC)) {
     console.warn(`widgets-src/ not found at ${WIDGETS_SRC}`);
@@ -214,6 +247,16 @@ function discoverWidgets() {
         console.warn(`skipping ${e.name}: info.json missing name or version`);
         continue;
       }
+      const readControllers = (file) => {
+        const p = path.join(widgetDir, file);
+        if (!fs.existsSync(p)) return [];
+        try {
+          return HU.extractRegisteredControllers(fs.readFileSync(p, "utf8"));
+        } catch (_) {
+          return [];
+        }
+      };
+      const staleVersionRefs = scanStaleVersionRefs(widgetDir, info.name, info.version);
       out.push({
         folder: e.name,
         dir: widgetDir,
@@ -223,6 +266,9 @@ function discoverWidgets() {
         title: info.title || info.name,
         subTitle: info.subTitle || "",
         pages: (info.metadata && info.metadata.pages) || [],
+        viewControllers: readControllers("view.controller.js"),
+        editControllers: readControllers("edit.controller.js"),
+        staleVersionRefs,
       });
     } catch (err) {
       console.warn(`skipping ${e.name}: bad info.json (${err.message})`);
@@ -280,6 +326,9 @@ app.get("/_fsr/widgets", (_req, res) => {
       title: w.title,
       subTitle: w.subTitle,
       pages: w.pages,
+      viewControllers: w.viewControllers || [],
+      editControllers: w.editControllers || [],
+      staleVersionRefs: w.staleVersionRefs || [],
     })),
   });
 });
@@ -307,6 +356,15 @@ for (const w of WIDGETS) {
         w.id = newId;
         w.version = info.version;
         w.title = info.title || info.name;
+        const reread = (file) => {
+          const p = path.join(w.dir, file);
+          if (!fs.existsSync(p)) return [];
+          try { return HU.extractRegisteredControllers(fs.readFileSync(p, "utf8")); }
+          catch (_) { return []; }
+        };
+        w.viewControllers = reread("view.controller.js");
+        w.editControllers = reread("edit.controller.js");
+        w.staleVersionRefs = scanStaleVersionRefs(w.dir, w.name, w.version);
         widgetsById.set(newId, w);
         mountWidget(w);
         console.log(`reload ${oldId} -> ${newId}`);
@@ -322,6 +380,87 @@ function readCurrentInfo(widget) {
   const info = JSON.parse(fs.readFileSync(infoPath, "utf8"));
   return { info, infoPath };
 }
+
+// Auto-fix endpoint: when info.json's version no longer matches the digits
+// embedded in the controller identifiers, rewrite each controller file by
+// substituting every occurrence of the old name with the expected one. Only
+// safe when the registered name matches the SOAR convention exactly.
+app.post("/_fsr/fix-controllers/:id", (req, res) => {
+  const w = widgetsById.get(req.params.id);
+  if (!w) return res.status(404).json({ error: "unknown widget id" });
+  const expectedView = HU.deriveControllerName(w.name, w.version);
+  const expectedEdit = HU.deriveEditControllerName(w.name, w.version);
+  const cap = w.name.charAt(0).toUpperCase() + w.name.slice(1);
+  const viewPattern = new RegExp("^" + w.name + "\\d+DevCtrl$");
+  const editPattern = new RegExp("^edit" + cap + "\\d+DevCtrl$");
+
+  const fixes = [];
+  const tryFix = (file, expected, pattern) => {
+    const p = path.join(w.dir, file);
+    if (!fs.existsSync(p)) return;
+    const src = fs.readFileSync(p, "utf8");
+    const registered = HU.extractRegisteredControllers(src);
+    const stale = registered.filter((n) => pattern.test(n) && n !== expected);
+    if (stale.length === 0) return;
+    let next = src;
+    for (const old of stale) {
+      next = next.split(old).join(expected);
+    }
+    fs.writeFileSync(p, next, "utf8");
+    fixes.push({ file, replaced: stale, expected });
+  };
+
+  try {
+    tryFix("view.controller.js", expectedView, viewPattern);
+    tryFix("edit.controller.js", expectedEdit, editPattern);
+  } catch (e) {
+    return res.status(500).json({ error: e.message });
+  }
+
+  // Sweep all known files for stale `<name>-X.Y.Z` references and rewrite
+  // them to the current version. Same idempotent string-replace approach.
+  try {
+    const re = staleRefRegex(w.name);
+    for (const file of VERSIONED_REF_FILES) {
+      const p = path.join(w.dir, file);
+      if (!fs.existsSync(p)) continue;
+      const src = fs.readFileSync(p, "utf8");
+      const stale = new Set();
+      let m;
+      re.lastIndex = 0;
+      while ((m = re.exec(src)) !== null) {
+        if (m[1] !== w.version) stale.add(m[1]);
+      }
+      if (stale.size === 0) continue;
+      let next = src;
+      for (const oldVer of stale) {
+        next = next.split(`${w.name}-${oldVer}`).join(`${w.name}-${w.version}`);
+      }
+      fs.writeFileSync(p, next, "utf8");
+      fixes.push({ file, replacedVersions: Array.from(stale), to: w.version });
+    }
+  } catch (e) {
+    return res.status(500).json({ error: e.message });
+  }
+
+  // Refresh the cached registrations so /_fsr/widgets reflects the change.
+  const reread = (file) => {
+    const p = path.join(w.dir, file);
+    if (!fs.existsSync(p)) return [];
+    try { return HU.extractRegisteredControllers(fs.readFileSync(p, "utf8")); }
+    catch (_) { return []; }
+  };
+  w.viewControllers = reread("view.controller.js");
+  w.editControllers = reread("edit.controller.js");
+  w.staleVersionRefs = scanStaleVersionRefs(w.dir, w.name, w.version);
+
+  res.json({
+    fixes,
+    viewControllers: w.viewControllers,
+    editControllers: w.editControllers,
+    staleVersionRefs: w.staleVersionRefs,
+  });
+});
 
 app.get("/_fsr/package/:id/info", (req, res) => {
   const w = widgetsById.get(req.params.id);

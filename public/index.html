@@ -716,6 +716,66 @@
           while (host.firstChild) host.removeChild(host.firstChild);
 
           const ctrlName = HU.deriveControllerName(current.name, current.version);
+          const editCtrlNameExpected = HU.deriveEditControllerName(current.name, current.version);
+          const viewRegistered = current.viewControllers || [];
+          const editRegistered = current.editControllers || [];
+          const staleRefs = current.staleVersionRefs || [];
+          const viewMismatch = viewRegistered.length > 0 && viewRegistered.indexOf(ctrlName) === -1;
+          const editMismatch = editRegistered.length > 0 && editRegistered.indexOf(editCtrlNameExpected) === -1;
+          if (viewMismatch || editMismatch || staleRefs.length > 0) {
+            const err = document.createElement("div");
+            err.style.cssText = "padding:16px;border:1px solid #c33;background:#fee;color:#900;font-family:monospace;white-space:pre-wrap;";
+            const lines = ["Controller name mismatch (info.json version " + current.version + ").", ""];
+            if (viewMismatch) {
+              lines.push("view.controller.js");
+              lines.push("  expected:   " + ctrlName);
+              lines.push("  registered: " + viewRegistered.join(", "));
+              lines.push("");
+            }
+            if (editMismatch) {
+              lines.push("edit.controller.js");
+              lines.push("  expected:   " + editCtrlNameExpected);
+              lines.push("  registered: " + editRegistered.join(", "));
+              lines.push("");
+            }
+            if (staleRefs.length > 0) {
+              lines.push("Stale version references (expected " + current.version + "):");
+              for (const r of staleRefs) {
+                lines.push("  " + r.file + " -> " + r.staleVersions.join(", "));
+              }
+              lines.push("");
+            }
+            lines.push("Either align the controller name(s) and versioned paths to info.json, or revert info.json.");
+            const msg = document.createElement("div");
+            msg.textContent = lines.join("\n");
+            err.appendChild(msg);
+
+            const fixBtn = document.createElement("button");
+            fixBtn.textContent = "Try auto-fix";
+            fixBtn.style.cssText = "margin-top:12px;padding:6px 12px;cursor:pointer;";
+            fixBtn.addEventListener("click", async () => {
+              fixBtn.disabled = true;
+              fixBtn.textContent = "fixing…";
+              try {
+                const r = await fetch("/_fsr/fix-controllers/" + current.id, { method: "POST" });
+                const data = await r.json();
+                if (!r.ok) throw new Error(data.error || ("HTTP " + r.status));
+                if (!data.fixes || data.fixes.length === 0) {
+                  fixBtn.textContent = "no changes (registered names didn't match the SOAR convention)";
+                  return;
+                }
+                fixBtn.textContent = "fixed — reloading…";
+                location.reload();
+              } catch (e) {
+                fixBtn.disabled = false;
+                fixBtn.textContent = "auto-fix failed: " + e.message;
+              }
+            });
+            err.appendChild(fixBtn);
+
+            host.appendChild(err);
+            if (viewMismatch) return;
+          }
           const wrap = document.createElement("div");
           wrap.setAttribute("ng-controller", ctrlName);
           const inc = document.createElement("div");
@@ -769,6 +829,20 @@
           try {
             await loadScript("/" + current.id + "/edit.controller.js");
             const editCtrlName = HU.deriveEditControllerName(current.name, current.version);
+            const editRegistered = current.editControllers || [];
+            if (editRegistered.length > 0 && editRegistered.indexOf(editCtrlName) === -1) {
+              while (modalBody.firstChild) modalBody.removeChild(modalBody.firstChild);
+              const err = document.createElement("div");
+              err.style.cssText = "padding:16px;border:1px solid #c33;background:#fee;color:#900;font-family:monospace;white-space:pre-wrap;";
+              err.textContent =
+                "Edit controller mismatch.\n\n" +
+                "Expected (from info.json version " + current.version + "): " + editCtrlName + "\n" +
+                "Registered in edit.controller.js: " + editRegistered.join(", ") + "\n\n" +
+                "Either bump the controller name to match the version, or revert info.json.";
+              modalBody.appendChild(err);
+              modalStatus.textContent = "";
+              return;
+            }
 
             let saved = null;
             try {
