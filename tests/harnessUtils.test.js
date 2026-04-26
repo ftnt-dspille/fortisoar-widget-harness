@@ -9,6 +9,10 @@ const {
   recordFetchPath,
   resolveMapping,
   stateForContext,
+  extractInjectedDependencies,
+  parseRegisteredServices,
+  rootNgControllerError,
+  lintWidget,
 } = require("../lib/harnessUtils");
 
 describe("resolvePath", () => {
@@ -173,5 +177,123 @@ describe("stateForContext", () => {
       current: { name: "main.dashboard" },
       params: {},
     });
+  });
+});
+
+describe("extractInjectedDependencies", () => {
+  test("picks up the $inject array form", () => {
+    const src = `
+      function Ctrl(){}
+      Ctrl.$inject = ["$scope", "Modules", "toaster"];
+      angular.module("x").controller("Ctrl", Ctrl);
+    `;
+    expect(extractInjectedDependencies(src).sort()).toEqual(["$scope", "Modules", "toaster"].sort());
+  });
+
+  test("picks up the inline-array .controller form", () => {
+    const src = `angular.module("x").controller("C", ["$scope", "Foo", function ($scope, Foo) {}]);`;
+    expect(extractInjectedDependencies(src).sort()).toEqual(["$scope", "Foo"].sort());
+  });
+
+  test("picks up the implicit function-arg form", () => {
+    const src = `
+      function MyCtrl($scope, Bar, $http) {}
+      angular.module("x").controller("MyCtrl", MyCtrl);
+    `;
+    expect(extractInjectedDependencies(src).sort()).toEqual(["$scope", "Bar", "$http"].sort());
+  });
+
+  test("returns [] for empty / non-string input", () => {
+    expect(extractInjectedDependencies("")).toEqual([]);
+    expect(extractInjectedDependencies(null)).toEqual([]);
+  });
+});
+
+describe("parseRegisteredServices", () => {
+  test("collects factory/value/directive registrations", () => {
+    const src = `
+      angular.module("cybersponse", [])
+        .factory("Foo", function () {})
+        .value("config", {})
+        .directive("csSpinner", function () {});
+    `;
+    expect(parseRegisteredServices(src).sort()).toEqual(["Foo", "config", "csSpinner"].sort());
+  });
+});
+
+describe("rootNgControllerError", () => {
+  test("flags ng-controller on root", () => {
+    expect(rootNgControllerError(`<div ng-controller="X">x</div>`)).toMatch(/collides/);
+    expect(rootNgControllerError(`<div data-ng-controller="X">x</div>`)).toMatch(/collides/);
+  });
+  test("clean root returns null", () => {
+    expect(rootNgControllerError(`<div class="x">y</div>`)).toBeNull();
+  });
+  test("ignores leading comment", () => {
+    expect(rootNgControllerError(`<!-- top --><div class="x"></div>`)).toBeNull();
+  });
+});
+
+describe("lintWidget", () => {
+  const baseFiles = {
+    "view.controller.js": `function foo112DevCtrl($scope){} foo112DevCtrl.$inject=["$scope"]; angular.module("x").controller("foo112DevCtrl", foo112DevCtrl);`,
+    "edit.controller.js": `function editFoo112DevCtrl($scope){} editFoo112DevCtrl.$inject=["$scope"]; angular.module("x").controller("editFoo112DevCtrl", editFoo112DevCtrl);`,
+    "view.html": `<div><span>{{x}}</span></div>`,
+    "edit.html": `<div></div>`,
+  };
+  const baseInfo = { name: "foo", version: "1.1.2", title: "Foo" };
+
+  test("clean widget yields no errors", () => {
+    const r = lintWidget({
+      info: baseInfo,
+      files: baseFiles,
+      registeredServices: [],
+      viewControllers: ["foo112DevCtrl"],
+      editControllers: ["editFoo112DevCtrl"],
+    });
+    expect(r.errors).toEqual([]);
+  });
+
+  test("missing required file is an error", () => {
+    const files = Object.assign({}, baseFiles); delete files["edit.html"];
+    const r = lintWidget({ info: baseInfo, files });
+    expect(r.errors.some((e) => e.code === "file-missing" && e.file === "edit.html")).toBe(true);
+  });
+
+  test("controller mismatch is fixable", () => {
+    const r = lintWidget({
+      info: baseInfo,
+      files: baseFiles,
+      viewControllers: ["foo111DevCtrl"],
+    });
+    const e = r.errors.find((x) => x.code === "controller-mismatch");
+    expect(e).toBeTruthy();
+    expect(e.fixable).toBe(true);
+  });
+
+  test("unknown injected service is reported", () => {
+    const files = Object.assign({}, baseFiles, {
+      "view.controller.js": `function f(){} f.$inject=["$scope","NotRegistered"]; angular.module("x").controller("foo112DevCtrl", f);`,
+    });
+    const r = lintWidget({
+      info: baseInfo,
+      files,
+      registeredServices: ["Modules"],
+      viewControllers: ["foo112DevCtrl"],
+    });
+    const e = r.errors.find((x) => x.code === "unknown-dependency");
+    expect(e).toBeTruthy();
+    expect(e.unknown).toContain("NotRegistered");
+  });
+
+  test("ng-controller on root is an error", () => {
+    const files = Object.assign({}, baseFiles, { "view.html": `<div ng-controller="x">y</div>` });
+    const r = lintWidget({ info: baseInfo, files });
+    expect(r.errors.some((e) => e.code === "root-ng-controller")).toBe(true);
+  });
+
+  test("missing info.json yields a single error", () => {
+    const r = lintWidget({ info: null, files: {} });
+    expect(r.errors[0].code).toBe("info-missing");
   });
 });
