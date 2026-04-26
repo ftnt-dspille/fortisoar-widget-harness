@@ -28,6 +28,48 @@ const PORT = Number(process.env.PORT || 4400);
 const HOST = process.env.FORTISOAR_HOST;
 const USER = process.env.FORTISOAR_USERNAME;
 const PASS = process.env.FORTISOAR_PASSWORD;
+let PROXY_VERBOSE = process.env.PROXY_VERBOSE === "1";
+
+const HARNESS_MODULE_PATH = path.resolve(__dirname, "harness.module.js");
+let REGISTERED_SERVICES = (() => {
+  try {
+    return HU.parseRegisteredServices(fs.readFileSync(HARNESS_MODULE_PATH, "utf8"));
+  } catch { return []; }
+})();
+fs.watch(HARNESS_MODULE_PATH, { persistent: false }, () => {
+  try {
+    REGISTERED_SERVICES = HU.parseRegisteredServices(fs.readFileSync(HARNESS_MODULE_PATH, "utf8"));
+    for (const w of WIDGETS) refreshWidget(w);
+    broadcast({ type: "harness-reload", services: REGISTERED_SERVICES });
+  } catch (e) { console.warn(`harness.module.js reload failed: ${e.message}`); }
+});
+
+// Lint context files we read off disk per widget.
+const LINT_FILES = ["view.controller.js", "edit.controller.js", "view.html", "edit.html"];
+
+function readLintFiles(widgetDir) {
+  const out = {};
+  for (const f of LINT_FILES) {
+    const p = path.join(widgetDir, f);
+    try { out[f] = fs.existsSync(p) ? fs.readFileSync(p, "utf8") : null; }
+    catch { out[f] = null; }
+  }
+  return out;
+}
+
+function lintFor(widget) {
+  const infoPath = path.join(widget.dir, "info.json");
+  let info = null;
+  try { info = JSON.parse(fs.readFileSync(infoPath, "utf8")); } catch { /* surfaced below */ }
+  return HU.lintWidget({
+    info,
+    files: readLintFiles(widget.dir),
+    registeredServices: REGISTERED_SERVICES,
+    staleVersionRefs: widget.staleVersionRefs || [],
+    viewControllers: widget.viewControllers || [],
+    editControllers: widget.editControllers || [],
+  });
+}
 
 // Credential check is deferred to startup so the module can be imported
 // by tests without exiting. See the require.main block at the bottom.
@@ -280,6 +322,65 @@ function discoverWidgets() {
 const app = express();
 const WIDGETS = discoverWidgets();
 
+// SSE clients receive widget-change, harness-reload, and proxy-log events.
+// Each client is a Response with an open keep-alive stream. We push JSON
+// objects with a `type` field so the browser can route them to the right
+// handler (hot-reload, network panel, etc.).
+const sseClients = new Set();
+function broadcast(obj) {
+  const line = `data: ${JSON.stringify(obj)}\n\n`;
+  for (const res of sseClients) {
+    try { res.write(line); } catch { /* client gone */ }
+  }
+}
+
+// Refresh cached metadata + lint for a widget. Called on file-watcher events
+// and after the harness module changes (which can change `unknown-dependency`
+// outcomes for every widget at once).
+function refreshWidget(w) {
+  const reread = (file) => {
+    const p = path.join(w.dir, file);
+    if (!fs.existsSync(p)) return [];
+    try { return HU.extractRegisteredControllers(fs.readFileSync(p, "utf8")); }
+    catch { return []; }
+  };
+  try {
+    const info = JSON.parse(fs.readFileSync(path.join(w.dir, "info.json"), "utf8"));
+    const newId = `${info.name}-${info.version}`;
+    if (newId !== w.id) {
+      widgetsById.delete(w.id);
+      w.id = newId;
+      w.version = info.version;
+      w.title = info.title || info.name;
+      widgetsById.set(newId, w);
+      mountWidget(w);
+    }
+  } catch { /* lint will report */ }
+  w.viewControllers = reread("view.controller.js");
+  w.editControllers = reread("edit.controller.js");
+  w.staleVersionRefs = scanStaleVersionRefs(w.dir, w.name, w.version);
+  w.lint = lintFor(w);
+}
+
+// Proxy log ring buffer for the in-page Network tab.
+const PROXY_LOG_MAX = 200;
+const PROXY_LOG = [];
+let proxyLogSeq = 0;
+const REDACT_HEADERS = new Set(["authorization", "cookie", "set-cookie", "x-csrf-token"]);
+function redactHeaders(h) {
+  const out = {};
+  for (const [k, v] of Object.entries(h || {})) {
+    out[k] = REDACT_HEADERS.has(k.toLowerCase()) ? "<redacted>" : v;
+  }
+  return out;
+}
+function recordProxy(entry) {
+  entry.id = ++proxyLogSeq;
+  PROXY_LOG.push(entry);
+  if (PROXY_LOG.length > PROXY_LOG_MAX) PROXY_LOG.shift();
+  broadcast({ type: "proxy", entry });
+}
+
 function mountWidget(w) {
   app.use(`/${w.id}`, express.static(w.dir, { etag: false, cacheControl: false }));
   console.log(`mount  /${w.id}  ->  ${w.dir}`);
@@ -329,8 +430,52 @@ app.get("/_fsr/widgets", (_req, res) => {
       viewControllers: w.viewControllers || [],
       editControllers: w.editControllers || [],
       staleVersionRefs: w.staleVersionRefs || [],
+      lint: w.lint || { errors: [], warnings: [] },
     })),
+    registeredServices: REGISTERED_SERVICES,
   });
+});
+
+app.get("/_fsr/lint/:id", (req, res) => {
+  const w = widgetsById.get(req.params.id);
+  if (!w) return res.status(404).json({ error: "unknown widget id" });
+  refreshWidget(w);
+  res.json({ id: w.id, lint: w.lint });
+});
+
+// SSE: widget-change, harness-reload, proxy-log entries. Sends a hello so
+// the client knows the channel is alive even if no event fires for a while.
+app.get("/_fsr/events", (req, res) => {
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders();
+  res.write(`data: ${JSON.stringify({ type: "hello", verbose: PROXY_VERBOSE })}\n\n`);
+  sseClients.add(res);
+  const ka = setInterval(() => {
+    try { res.write(`: keepalive\n\n`); } catch { /* ignore */ }
+  }, 25000);
+  req.on("close", () => {
+    clearInterval(ka);
+    sseClients.delete(res);
+  });
+});
+
+app.get("/_fsr/proxy-log", (_req, res) => {
+  res.json({ entries: PROXY_LOG, verbose: PROXY_VERBOSE });
+});
+
+app.post("/_fsr/proxy-log/verbose", express.json(), (req, res) => {
+  const v = !!(req.body && req.body.verbose);
+  PROXY_VERBOSE = v;
+  broadcast({ type: "verbose", verbose: v });
+  res.json({ verbose: v });
+});
+
+app.delete("/_fsr/proxy-log", (_req, res) => {
+  PROXY_LOG.length = 0;
+  broadcast({ type: "proxy-clear" });
+  res.json({ ok: true });
 });
 
 const PACKAGE_OUTPUT_DIR = process.env.PACKAGE_OUTPUT_DIR
@@ -338,41 +483,29 @@ const PACKAGE_OUTPUT_DIR = process.env.PACKAGE_OUTPUT_DIR
   : path.resolve(__dirname, "widget-packages");
 const widgetsById = new Map(WIDGETS.map((w) => [w.id, w]));
 
-// Hot-reload: watch each widget's info.json for version bumps. When the id
-// changes, update the in-memory structures and mount a new static route so
-// the harness picks up the new version without a server restart.
+// Initial lint pass for every discovered widget.
+for (const w of WIDGETS) w.lint = lintFor(w);
+
+// Hot-reload: watch each widget's directory for changes to source files. On
+// any change we re-extract metadata, re-run lint, and broadcast over SSE so
+// connected browsers can soft-remount without a full page reload.
+const HOT_RELOAD_FILES = new Set(["info.json", ...LINT_FILES]);
 for (const w of WIDGETS) {
-  const infoPath = path.join(w.dir, "info.json");
   let debounce = null;
-  fs.watch(infoPath, { persistent: false }, () => {
-    clearTimeout(debounce);
-    debounce = setTimeout(() => {
-      try {
-        const info = JSON.parse(fs.readFileSync(infoPath, "utf8"));
-        const newId = `${info.name}-${info.version}`;
-        if (newId === w.id) return;
+  try {
+    fs.watch(w.dir, { persistent: false }, (_event, filename) => {
+      if (!filename || !HOT_RELOAD_FILES.has(filename)) return;
+      clearTimeout(debounce);
+      debounce = setTimeout(() => {
         const oldId = w.id;
-        widgetsById.delete(oldId);
-        w.id = newId;
-        w.version = info.version;
-        w.title = info.title || info.name;
-        const reread = (file) => {
-          const p = path.join(w.dir, file);
-          if (!fs.existsSync(p)) return [];
-          try { return HU.extractRegisteredControllers(fs.readFileSync(p, "utf8")); }
-          catch (_) { return []; }
-        };
-        w.viewControllers = reread("view.controller.js");
-        w.editControllers = reread("edit.controller.js");
-        w.staleVersionRefs = scanStaleVersionRefs(w.dir, w.name, w.version);
-        widgetsById.set(newId, w);
-        mountWidget(w);
-        console.log(`reload ${oldId} -> ${newId}`);
-      } catch (err) {
-        console.warn(`reload failed for ${w.folder}: ${err.message}`);
-      }
-    }, 100);
-  });
+        refreshWidget(w);
+        if (oldId !== w.id) console.log(`reload ${oldId} -> ${w.id}`);
+        broadcast({ type: "widget-change", id: w.id, oldId, file: filename, lint: w.lint });
+      }, 80);
+    });
+  } catch (e) {
+    console.warn(`watch failed for ${w.folder}: ${e.message}`);
+  }
 }
 
 function readCurrentInfo(widget) {
@@ -473,11 +606,23 @@ app.get("/_fsr/package/:id/info", (req, res) => {
   }
 });
 
+function blockingLintErrors(w) {
+  refreshWidget(w);
+  const errs = (w.lint && w.lint.errors) || [];
+  return errs;
+}
+
 app.post("/_fsr/package/:id", express.json(), async (req, res) => {
   const w = widgetsById.get(req.params.id);
   if (!w) return res.status(404).json({ error: "unknown widget id" });
 
   const body = req.body || {};
+  if (!body.skipLint) {
+    const errs = blockingLintErrors(w);
+    if (errs.length > 0) {
+      return res.status(400).json({ error: "lint failed", lint: { errors: errs } });
+    }
+  }
   try {
     const { info, infoPath } = readCurrentInfo(w);
     let version = info.version;
@@ -529,6 +674,12 @@ app.post("/_fsr/install/:id", express.json(), async (req, res) => {
   if (!w) return res.status(404).json({ error: "unknown widget id" });
 
   const body = req.body || {};
+  if (!body.skipLint) {
+    const errs = blockingLintErrors(w);
+    if (errs.length > 0) {
+      return res.status(400).json({ error: "lint failed", lint: { errors: errs } });
+    }
+  }
   try {
     const { info, infoPath } = readCurrentInfo(w);
     let version = info.version;
@@ -692,12 +843,28 @@ async function ensureAuthMiddleware(req, res, next) {
   }
 }
 
+// Body capture for the in-page Network tab. We only buffer when verbose mode
+// is on (or the request is non-asset /api/*) to keep the ring buffer useful.
+// Bodies are truncated to BODY_CAP bytes; binary payloads are flagged.
+const BODY_CAP = 4096;
+function shouldCapture(req) {
+  if (!PROXY_VERBOSE && !req.originalUrl.startsWith("/api/")) return false;
+  return true;
+}
+function truncate(buf) {
+  if (!buf) return { text: "", truncated: false, binary: false };
+  const ascii = buf.slice(0, BODY_CAP).toString("utf8");
+  const binary = /[\x00-\x08\x0E-\x1F]/.test(ascii.slice(0, 256));
+  return { text: ascii, truncated: buf.length > BODY_CAP, binary };
+}
+
 const proxy = createProxyMiddleware({
   pathFilter: (p) => !isLocalPath(p),
   target: HOST,
   changeOrigin: true,
   secure: false,
   ws: true,
+  selfHandleResponse: false,
   // Cap proxy waits so an unreachable SOAR host (e.g. /node_modules/...)
   // fails the browser request in seconds, not TCP-retry minutes.
   timeout: 10000,
@@ -707,6 +874,8 @@ const proxy = createProxyMiddleware({
       if (cachedToken) {
         proxyReq.setHeader("Authorization", `Bearer ${cachedToken}`);
       }
+      req.__startMs = Date.now();
+      req.__capture = shouldCapture(req);
       console.log(`-> ${req.method} ${req.originalUrl}`);
     },
     proxyRes(proxyRes, req) {
@@ -720,9 +889,40 @@ const proxy = createProxyMiddleware({
       } else {
         console.log(`<- ${proxyRes.statusCode} ${req.originalUrl}`);
       }
+
+      if (req.__capture) {
+        const chunks = [];
+        let total = 0;
+        proxyRes.on("data", (c) => {
+          if (total < BODY_CAP) chunks.push(c);
+          total += c.length;
+        });
+        proxyRes.on("end", () => {
+          const buf = Buffer.concat(chunks);
+          recordProxy({
+            ts: Date.now(),
+            ms: Date.now() - (req.__startMs || Date.now()),
+            method: req.method,
+            url: req.originalUrl,
+            status: proxyRes.statusCode,
+            reqHeaders: redactHeaders(req.headers),
+            resHeaders: redactHeaders(proxyRes.headers),
+            resBody: truncate(buf),
+            resBodyLength: total,
+          });
+        });
+      }
     },
     error(err, req, res) {
       console.error(`xx ${req.originalUrl}  ${err.message}`);
+      recordProxy({
+        ts: Date.now(),
+        ms: Date.now() - (req.__startMs || Date.now()),
+        method: req.method,
+        url: req.originalUrl,
+        status: 0,
+        error: err.message,
+      });
       if (res && !res.headersSent)
         res.status(502).json({ error: err.message });
     },
