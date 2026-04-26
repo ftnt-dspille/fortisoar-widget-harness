@@ -388,6 +388,10 @@
       <button id="package-toggle" class="btn btn-sm btn-default" style="padding: 2px 10px">
         Package
       </button>
+      <button id="import-toggle" class="btn btn-sm btn-default" style="padding: 2px 10px"
+              title="Browse widgets installed on the proxied SOAR and copy one into widgets-src/">
+        Import…
+      </button>
       <span class="spacer"></span>
       <button id="drawer-toggle-btn" class="btn btn-sm btn-default" style="padding: 2px 10px"
               title="Toggle the debug drawer (Errors / Network / Console)">
@@ -425,6 +429,37 @@
       <div id="record-header" class="harness-record-header" style="display: none"></div>
       <div id="widget-host">
         <div class="harness-empty">loading…</div>
+      </div>
+    </div>
+
+    <div id="import-modal-backdrop" class="harness-modal-backdrop">
+      <div class="harness-modal" style="max-width: 760px;">
+        <div class="harness-modal-head">
+          <span>Import widget from FortiSOAR</span>
+          <button id="import-modal-close" class="btn btn-xs btn-default" type="button">close</button>
+        </div>
+        <div class="harness-modal-body" style="display:flex;flex-direction:column;gap:8px;">
+          <div style="display:flex;gap:8px;align-items:center;">
+            <input id="import-filter" placeholder="filter by name/title…" style="flex:1;padding:4px 8px;" />
+            <label style="font-size:12px;display:flex;gap:4px;align-items:center;">
+              <input type="checkbox" id="import-show-inbuilt" checked /> include built-in
+            </label>
+            <button id="import-refresh" class="btn btn-xs btn-default" type="button">refresh</button>
+          </div>
+          <div id="import-list" style="overflow:auto;max-height:50vh;border:1px solid rgba(255,255,255,0.1);">
+            <div style="padding:12px;opacity:0.6;">loading…</div>
+          </div>
+          <label style="font-size:12px;display:flex;gap:6px;align-items:center;">
+            folder
+            <input id="import-folder" placeholder="(auto from name)" style="flex:1;padding:2px 6px;" />
+            <span style="opacity:0.6;">— created under widgets-src/</span>
+          </label>
+        </div>
+        <div class="harness-modal-foot">
+          <span id="import-status" style="opacity: 0.7; font-size: 12px; margin-right: auto"></span>
+          <button id="import-cancel" class="btn btn-sm btn-default" type="button">Cancel</button>
+          <button id="import-go" class="btn btn-sm btn-primary" type="button" disabled>Import</button>
+        </div>
       </div>
     </div>
 
@@ -615,6 +650,127 @@
         pkgToggle.addEventListener("click", async () => {
           pkgPanel.classList.toggle("open");
           if (pkgPanel.classList.contains("open")) await loadPackageInfo();
+        });
+
+        // Import modal: list widgets installed on the proxied SOAR and copy a
+        // selected one into widgets-src/<folder>/widget. After import the new
+        // widget arrives via the widget-change SSE event; we add an option to
+        // the dropdown and select it so the user lands on the imported copy.
+        const importBackdrop = document.getElementById("import-modal-backdrop");
+        const importToggle = document.getElementById("import-toggle");
+        const importList = document.getElementById("import-list");
+        const importFilter = document.getElementById("import-filter");
+        const importShowInbuilt = document.getElementById("import-show-inbuilt");
+        const importRefresh = document.getElementById("import-refresh");
+        const importFolder = document.getElementById("import-folder");
+        const importGo = document.getElementById("import-go");
+        const importStatus = document.getElementById("import-status");
+        let importRows = [];
+        let importPickedUuid = null;
+
+        function renderImportList() {
+          const q = (importFilter.value || "").toLowerCase().trim();
+          const showInbuilt = importShowInbuilt.checked;
+          const filtered = importRows.filter((w) => {
+            if (!showInbuilt && w.inbuilt) return false;
+            if (!q) return true;
+            return (
+              (w.name || "").toLowerCase().includes(q) ||
+              (w.title || "").toLowerCase().includes(q) ||
+              (w.uuid || "").toLowerCase().includes(q)
+            );
+          });
+          while (importList.firstChild) importList.removeChild(importList.firstChild);
+          if (filtered.length === 0) {
+            const d = document.createElement("div");
+            d.style.padding = "12px";
+            d.style.opacity = "0.6";
+            d.textContent = "no widgets match";
+            importList.appendChild(d);
+            return;
+          }
+          for (const w of filtered) {
+            const row = document.createElement("div");
+            row.style.cssText =
+              "padding:6px 10px;border-bottom:1px solid rgba(255,255,255,0.06);cursor:pointer;display:flex;gap:10px;align-items:center;";
+            if (w.uuid === importPickedUuid) row.style.background = "rgba(91,192,222,0.12)";
+            row.title = w.uuid;
+            const title = document.createElement("div");
+            title.style.flex = "1";
+            title.textContent = w.title + "  ";
+            const sub = document.createElement("span");
+            sub.style.cssText = "opacity:0.6;font-size:11px;";
+            sub.textContent = w.name + " v" + w.version + (w.inbuilt ? " (built-in)" : "");
+            title.appendChild(sub);
+            row.appendChild(title);
+            row.addEventListener("click", () => {
+              importPickedUuid = w.uuid;
+              if (!importFolder.value) {
+                importFolder.placeholder = (w.name || "").toLowerCase().replace(/[^a-z0-9]+/g, "-");
+              }
+              importGo.disabled = false;
+              renderImportList();
+            });
+            importList.appendChild(row);
+          }
+        }
+
+        async function loadRemoteWidgets() {
+          importStatus.textContent = "loading…";
+          importGo.disabled = true;
+          importPickedUuid = null;
+          try {
+            const r = await fetch("/_fsr/remote-widgets");
+            const j = await r.json();
+            if (!r.ok) throw new Error(j.error || ("HTTP " + r.status));
+            importRows = j.widgets || [];
+            importStatus.textContent = importRows.length + " widgets on SOAR";
+            renderImportList();
+          } catch (e) {
+            importStatus.textContent = "load failed: " + e.message;
+          }
+        }
+
+        importToggle.addEventListener("click", () => {
+          importBackdrop.classList.add("open");
+          loadRemoteWidgets();
+        });
+        function closeImport() { importBackdrop.classList.remove("open"); }
+        document.getElementById("import-modal-close").addEventListener("click", closeImport);
+        document.getElementById("import-cancel").addEventListener("click", closeImport);
+        importRefresh.addEventListener("click", loadRemoteWidgets);
+        importFilter.addEventListener("input", renderImportList);
+        importShowInbuilt.addEventListener("change", renderImportList);
+
+        importGo.addEventListener("click", async () => {
+          if (!importPickedUuid) return;
+          const folder = (importFolder.value || "").trim();
+          importGo.disabled = true;
+          importStatus.textContent = "importing…";
+          try {
+            const r = await fetch("/_fsr/import/" + encodeURIComponent(importPickedUuid), {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(folder ? { folder } : {}),
+            });
+            const j = await r.json();
+            if (!r.ok) throw new Error(j.error || ("HTTP " + r.status));
+            importStatus.textContent = "imported " + j.id + " into widgets-src/" + j.folder;
+            // Add and select the new widget in the dropdown.
+            const opt = document.createElement("option");
+            opt.value = j.id;
+            opt.textContent = j.title + " (" + j.id + ")";
+            widgetSelect.appendChild(opt);
+            widgetSelect.value = j.id;
+            localStorage.setItem("harness.widget", j.id);
+            closeImport();
+            // Full reload is simplest: the imported widget needs its
+            // controller script loaded, which the boot path already handles.
+            location.reload();
+          } catch (e) {
+            importStatus.textContent = "import failed: " + e.message;
+            importGo.disabled = false;
+          }
         });
 
         widgetSelect.addEventListener("change", () => {
