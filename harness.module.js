@@ -5,6 +5,27 @@
 (function () {
   const app = angular.module("cybersponse", []);
 
+  // Pipe Angular's exception channel into the harness debug drawer. Without
+  // this override, controller/digest errors only land in DevTools — the
+  // whole point of the drawer is to keep that information visible without
+  // needing to keep the console open. Also re-throws so DevTools breakpoints
+  // still fire on `Pause on caught exceptions`.
+  app.factory("$exceptionHandler", ["$log", function ($log) {
+    return function (exception, cause) {
+      try {
+        if (window.__harnessReportError) {
+          window.__harnessReportError({
+            source: "angular",
+            message: (exception && exception.message) || String(exception),
+            stack: (exception && exception.stack) || null,
+            cause: cause || null,
+          });
+        }
+      } catch (_) {}
+      $log.error.apply($log, arguments);
+    };
+  }]);
+
   // `config` is normally provided by the widget template service on the host
   // page. In the harness it's a value — set window.__HARNESS_CONFIG from the
   // boot page to control it per widget. Defaults are safe for most cases.

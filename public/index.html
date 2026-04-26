@@ -260,6 +260,84 @@
         justify-content: flex-end;
       }
       .harness-dvc { width: 100%; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+
+      /* Lint warning banner (non-blocking warnings live above the widget). */
+      .harness-lint-warn {
+        background: #fff3cd; border: 1px solid #ffe69c; color: #664d03;
+        padding: 8px 12px; margin: 0 16px 8px; border-radius: 4px; font-size: 12px;
+      }
+      body.theme-dark .harness-lint-warn {
+        background: #3a2f10; border-color: #6b5618; color: #f1d68a;
+      }
+
+      /* Bottom debug drawer. Holds Errors / Network / Console tabs. */
+      .harness-drawer {
+        position: fixed; left: 0; right: 0; bottom: 0; z-index: 200;
+        background: #1b1f24; color: #dcdcdc; border-top: 1px solid #3a4049;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
+        display: flex; flex-direction: column; max-height: 50vh;
+        transform: translateY(calc(100% - 32px)); transition: transform 0.18s ease;
+      }
+      .harness-drawer.open { transform: translateY(0); }
+      body.theme-light .harness-drawer { background: #f0f2f5; color: #1b1f24; border-top-color: #c0c5cc; }
+      .harness-drawer-bar {
+        display: flex; align-items: center; gap: 4px; padding: 4px 8px;
+        cursor: pointer; user-select: none; height: 32px; box-sizing: border-box;
+        border-bottom: 1px solid rgba(255,255,255,0.06);
+      }
+      body.theme-light .harness-drawer-bar { border-bottom-color: rgba(0,0,0,0.08); }
+      .harness-drawer-tab {
+        padding: 2px 10px; border-radius: 3px; cursor: pointer; font-size: 11px;
+        opacity: 0.65; display: inline-flex; align-items: center; gap: 6px;
+      }
+      .harness-drawer-tab:hover { opacity: 1; }
+      .harness-drawer-tab.active { background: rgba(255,255,255,0.08); opacity: 1; }
+      body.theme-light .harness-drawer-tab.active { background: rgba(0,0,0,0.08); }
+      .harness-drawer-badge {
+        background: #d9534f; color: #fff; padding: 0 6px; border-radius: 8px;
+        min-width: 16px; text-align: center; font-size: 10px; line-height: 14px;
+      }
+      .harness-drawer-badge.muted { background: #6c757d; }
+      .harness-drawer-spacer { flex: 1; }
+      .harness-drawer-action {
+        background: transparent; color: inherit; border: 1px solid rgba(255,255,255,0.15);
+        padding: 1px 8px; border-radius: 3px; font-size: 11px; cursor: pointer;
+      }
+      body.theme-light .harness-drawer-action { border-color: rgba(0,0,0,0.2); }
+      .harness-drawer-body {
+        overflow: auto; flex: 1; padding: 6px 8px; min-height: 220px;
+        background: #14171c;
+      }
+      body.theme-light .harness-drawer-body { background: #fafbfc; }
+      .harness-drawer-row {
+        padding: 3px 6px; border-bottom: 1px solid rgba(255,255,255,0.04);
+        white-space: pre-wrap; word-break: break-word; cursor: pointer;
+      }
+      body.theme-light .harness-drawer-row { border-bottom-color: rgba(0,0,0,0.06); }
+      .harness-drawer-row.expanded { background: rgba(255,255,255,0.04); }
+      body.theme-light .harness-drawer-row.expanded { background: rgba(0,0,0,0.04); }
+      .harness-drawer-row .meta { opacity: 0.6; font-size: 11px; margin-right: 6px; }
+      .harness-drawer-row .status-2xx { color: #6abf69; }
+      .harness-drawer-row .status-3xx { color: #5bc0de; }
+      .harness-drawer-row .status-4xx { color: #f0ad4e; }
+      .harness-drawer-row .status-5xx,
+      .harness-drawer-row .status-0   { color: #d9534f; }
+      .harness-drawer-detail {
+        padding: 6px 0 0 0; border-top: 1px dashed rgba(255,255,255,0.1);
+        margin-top: 4px; font-size: 11px;
+      }
+      .harness-drawer-detail pre {
+        background: rgba(0,0,0,0.25); color: inherit; padding: 6px 8px; border: 0;
+        border-radius: 3px; max-height: 240px; overflow: auto; font-size: 11px;
+      }
+      body.theme-light .harness-drawer-detail pre { background: rgba(0,0,0,0.05); }
+      .harness-drawer-empty { opacity: 0.55; padding: 12px; text-align: center; }
+      .harness-drawer-filter {
+        background: #2b313a; color: #dcdcdc; border: 1px solid #3a4049;
+        padding: 1px 6px; border-radius: 3px; font-size: 11px; width: 160px;
+      }
+      body.theme-light .harness-drawer-filter { background: #fff; color: #1b1f24; border-color: #c0c5cc; }
+      body.has-drawer-open { padding-bottom: 50vh; }
     </style>
   </head>
   <body>
@@ -304,6 +382,10 @@
         Package
       </button>
       <span class="spacer"></span>
+      <button id="drawer-toggle-btn" class="btn btn-sm btn-default" style="padding: 2px 10px"
+              title="Toggle the debug drawer (Errors / Network / Console)">
+        Debug <span id="drawer-error-count" class="harness-drawer-badge" style="display:none">0</span>
+      </button>
       <span style="opacity: 0.6; font-size: 11px">proxy → FortiSOAR</span>
     </div>
 
@@ -330,6 +412,8 @@
 
     <div id="harness-toasts" class="harness-toasts"></div>
 
+    <div id="lint-warnings"></div>
+
     <div id="harness-frame" class="harness-frame">
       <div id="record-header" class="harness-record-header" style="display: none"></div>
       <div id="widget-host">
@@ -352,8 +436,31 @@
       </div>
     </div>
 
+    <div id="harness-drawer" class="harness-drawer">
+      <div class="harness-drawer-bar" id="drawer-bar">
+        <span class="harness-drawer-tab active" data-tab="errors">
+          Errors <span id="tab-badge-errors" class="harness-drawer-badge" style="display:none">0</span>
+        </span>
+        <span class="harness-drawer-tab" data-tab="network">
+          Network <span id="tab-badge-network" class="harness-drawer-badge muted" style="display:none">0</span>
+        </span>
+        <span class="harness-drawer-tab" data-tab="console">
+          Console <span id="tab-badge-console" class="harness-drawer-badge muted" style="display:none">0</span>
+        </span>
+        <span class="harness-drawer-spacer"></span>
+        <input id="drawer-filter" class="harness-drawer-filter" placeholder="filter…" />
+        <label style="display:flex;gap:4px;align-items:center;font-size:11px;opacity:0.85;">
+          <input type="checkbox" id="drawer-verbose" /> verbose
+        </label>
+        <button id="drawer-clear" class="harness-drawer-action" type="button">clear</button>
+        <button id="drawer-collapse" class="harness-drawer-action" type="button">▾</button>
+      </div>
+      <div class="harness-drawer-body" id="drawer-body"></div>
+    </div>
+
     <script src="https://cdnjs.cloudflare.com/ajax/libs/angular.js/1.8.3/angular.min.js"></script>
     <script src="/lib/harnessUtils.js"></script>
+    <script src="/lib/harnessDrawer.js"></script>
 
     <script>
       function setEmpty(host, text) {
@@ -376,6 +483,67 @@
         const HU = window.HarnessUtils;
         const frame = document.getElementById("harness-frame");
         const recordHeader = document.getElementById("record-header");
+        const lintWarningsHost = document.getElementById("lint-warnings");
+
+        // Render non-blocking lint warnings above the widget. Errors are
+        // rendered as a separate red banner inside #widget-host because they
+        // *do* block bootstrap.
+        function renderLintWarnings(widget) {
+          while (lintWarningsHost.firstChild) lintWarningsHost.removeChild(lintWarningsHost.firstChild);
+          const warns = (widget.lint && widget.lint.warnings) || [];
+          if (warns.length === 0) return;
+          const div = document.createElement("div");
+          div.className = "harness-lint-warn";
+          const lines = warns.map((w) => "⚠ " + (w.code ? "[" + w.code + "] " : "") + w.message);
+          div.textContent = lines.join("\n");
+          div.style.whiteSpace = "pre-wrap";
+          lintWarningsHost.appendChild(div);
+        }
+
+        function renderLintBanner(hostEl, widget, errors) {
+          const err = document.createElement("div");
+          err.style.cssText = "padding:16px;border:1px solid #c33;background:#fee;color:#900;font-family:ui-monospace,monospace;white-space:pre-wrap;border-radius:4px;";
+          const head = document.createElement("div");
+          head.style.cssText = "font-weight:600;margin-bottom:8px;";
+          head.textContent = "Lint blocked widget bootstrap (" + errors.length + " issue" + (errors.length === 1 ? "" : "s") + ")";
+          err.appendChild(head);
+          for (const e of errors) {
+            const row = document.createElement("div");
+            row.style.cssText = "margin:4px 0;";
+            row.textContent = "• [" + e.code + "] " + e.message;
+            err.appendChild(row);
+          }
+          if (errors.some((e) => e.fixable)) {
+            const fixBtn = document.createElement("button");
+            fixBtn.textContent = "Try auto-fix";
+            fixBtn.className = "btn btn-sm btn-default";
+            fixBtn.style.cssText = "margin-top:12px;";
+            fixBtn.addEventListener("click", async () => {
+              fixBtn.disabled = true;
+              const orig = fixBtn.textContent;
+              fixBtn.textContent = "fixing…";
+              try {
+                const r = await fetch("/_fsr/fix-controllers/" + widget.id, { method: "POST" });
+                const data = await r.json();
+                if (!r.ok) throw new Error(data.error || ("HTTP " + r.status));
+                if (!data.fixes || data.fixes.length === 0) {
+                  fixBtn.textContent = "no changes (none of the issues were of the auto-fixable kind)";
+                  fixBtn.disabled = false;
+                  return;
+                }
+                fixBtn.textContent = "fixed — reloading…";
+                // SSE will trigger soft-remount; if not, fall back to reload.
+                setTimeout(() => location.reload(), 600);
+              } catch (e) {
+                fixBtn.disabled = false;
+                fixBtn.textContent = "auto-fix failed: " + e.message;
+                setTimeout(() => { fixBtn.textContent = orig; }, 3000);
+              }
+            });
+            err.appendChild(fixBtn);
+          }
+          hostEl.appendChild(err);
+        }
 
         ctxSel.value = localStorage.getItem("harness.ctx") || "dashboard";
         modEl.value = localStorage.getItem("harness.module") || "alerts";
@@ -477,7 +645,13 @@
               body: JSON.stringify(body),
             });
             const payload = await r.json().catch(() => ({}));
-            if (!r.ok) throw new Error(payload.error || "HTTP " + r.status);
+            if (!r.ok) {
+              if (payload.lint && payload.lint.errors) {
+                const codes = payload.lint.errors.map((e) => e.code).join(", ");
+                throw new Error("lint blocked install: " + codes + " — see the widget panel");
+              }
+              throw new Error(payload.error || "HTTP " + r.status);
+            }
             const newInstallId = payload.name + "-" + payload.version;
             updateWidgetSelectId(id, newInstallId);
             pkgCurrent.textContent = payload.version;
@@ -509,7 +683,12 @@
             });
             if (!r.ok) {
               let msg = "HTTP " + r.status;
-              try { const err = await r.json(); if (err && err.error) msg = err.error; } catch (_) {}
+              try {
+                const err = await r.json();
+                if (err && err.lint && err.lint.errors) {
+                  msg = "lint blocked package: " + err.lint.errors.map((e) => e.code).join(", ");
+                } else if (err && err.error) msg = err.error;
+              } catch (_) {}
               throw new Error(msg);
             }
             const cd = r.headers.get("Content-Disposition") || "";
@@ -716,65 +895,11 @@
           while (host.firstChild) host.removeChild(host.firstChild);
 
           const ctrlName = HU.deriveControllerName(current.name, current.version);
-          const editCtrlNameExpected = HU.deriveEditControllerName(current.name, current.version);
-          const viewRegistered = current.viewControllers || [];
-          const editRegistered = current.editControllers || [];
-          const staleRefs = current.staleVersionRefs || [];
-          const viewMismatch = viewRegistered.length > 0 && viewRegistered.indexOf(ctrlName) === -1;
-          const editMismatch = editRegistered.length > 0 && editRegistered.indexOf(editCtrlNameExpected) === -1;
-          if (viewMismatch || editMismatch || staleRefs.length > 0) {
-            const err = document.createElement("div");
-            err.style.cssText = "padding:16px;border:1px solid #c33;background:#fee;color:#900;font-family:monospace;white-space:pre-wrap;";
-            const lines = ["Controller name mismatch (info.json version " + current.version + ").", ""];
-            if (viewMismatch) {
-              lines.push("view.controller.js");
-              lines.push("  expected:   " + ctrlName);
-              lines.push("  registered: " + viewRegistered.join(", "));
-              lines.push("");
-            }
-            if (editMismatch) {
-              lines.push("edit.controller.js");
-              lines.push("  expected:   " + editCtrlNameExpected);
-              lines.push("  registered: " + editRegistered.join(", "));
-              lines.push("");
-            }
-            if (staleRefs.length > 0) {
-              lines.push("Stale version references (expected " + current.version + "):");
-              for (const r of staleRefs) {
-                lines.push("  " + r.file + " -> " + r.staleVersions.join(", "));
-              }
-              lines.push("");
-            }
-            lines.push("Either align the controller name(s) and versioned paths to info.json, or revert info.json.");
-            const msg = document.createElement("div");
-            msg.textContent = lines.join("\n");
-            err.appendChild(msg);
-
-            const fixBtn = document.createElement("button");
-            fixBtn.textContent = "Try auto-fix";
-            fixBtn.style.cssText = "margin-top:12px;padding:6px 12px;cursor:pointer;";
-            fixBtn.addEventListener("click", async () => {
-              fixBtn.disabled = true;
-              fixBtn.textContent = "fixing…";
-              try {
-                const r = await fetch("/_fsr/fix-controllers/" + current.id, { method: "POST" });
-                const data = await r.json();
-                if (!r.ok) throw new Error(data.error || ("HTTP " + r.status));
-                if (!data.fixes || data.fixes.length === 0) {
-                  fixBtn.textContent = "no changes (registered names didn't match the SOAR convention)";
-                  return;
-                }
-                fixBtn.textContent = "fixed — reloading…";
-                location.reload();
-              } catch (e) {
-                fixBtn.disabled = false;
-                fixBtn.textContent = "auto-fix failed: " + e.message;
-              }
-            });
-            err.appendChild(fixBtn);
-
-            host.appendChild(err);
-            if (viewMismatch) return;
+          renderLintWarnings(current);
+          const lintErrors = (current.lint && current.lint.errors) || [];
+          if (lintErrors.length > 0) {
+            renderLintBanner(host, current, lintErrors);
+            return;
           }
           const wrap = document.createElement("div");
           wrap.setAttribute("ng-controller", ctrlName);
@@ -889,6 +1014,62 @@
             modalStatus.textContent = "save failed: " + e.message;
           }
         });
+
+        // Soft-remount on file change: refresh widget metadata, reload the
+        // controller script with a cache-bust, and re-bootstrap. Avoids the
+        // full page reload so DevTools state, drawer entries, and scroll
+        // position survive an iteration. Only fires for the currently
+        // selected widget — other widgets just have their entries refreshed
+        // in the metadata cache.
+        async function softRemount(reason) {
+          try {
+            const refreshed = await fetch("/_fsr/widgets").then((r) => r.json());
+            const next = (refreshed.widgets || []).find((w) => w.id === current.id || w.name === current.name);
+            if (!next) return;
+            // Mutate `current` in place so existing closures keep working.
+            Object.assign(current, next);
+            // Patch the <select> if id changed (version bump while we watched).
+            updateWidgetSelectId(widgetSelect.value, current.id);
+            await loadScript("/" + current.id + "/view.controller.js?v=" + Date.now());
+            await mountWidget();
+            console.log("[harness] soft-remount: " + (reason || "change"));
+          } catch (e) {
+            console.error("[harness] soft-remount failed:", e);
+          }
+        }
+
+        // SSE wiring: drives soft-remount on file change and pipes proxy log
+        // entries into the debug drawer. EventSource auto-reconnects, so we
+        // don't need to handle disconnects explicitly.
+        try {
+          const es = new EventSource("/_fsr/events");
+          let remountTimer = null;
+          es.addEventListener("message", function (ev) {
+            let m;
+            try { m = JSON.parse(ev.data); } catch (_) { return; }
+            if (m.type === "widget-change") {
+              if (m.id === current.id || m.oldId === current.id || m.id.split("-")[0] === current.name) {
+                clearTimeout(remountTimer);
+                remountTimer = setTimeout(() => softRemount(m.file), 120);
+              }
+            } else if (m.type === "harness-reload") {
+              clearTimeout(remountTimer);
+              remountTimer = setTimeout(() => softRemount("harness.module.js"), 120);
+            } else if (m.type === "proxy") {
+              if (window.__harnessProxyEvent) window.__harnessProxyEvent(m.entry);
+            } else if (m.type === "proxy-clear") {
+              if (window.__harnessClearNetwork) window.__harnessClearNetwork();
+            } else if (m.type === "verbose") {
+              if (window.__harnessSetVerboseUI) window.__harnessSetVerboseUI(m.verbose);
+            } else if (m.type === "hello") {
+              if (window.__harnessSetVerboseUI) window.__harnessSetVerboseUI(m.verbose);
+            }
+          });
+          es.addEventListener("error", () => { /* EventSource reconnects */ });
+        } catch (e) {
+          console.warn("[harness] SSE unavailable:", e && e.message);
+        }
+        if (window.__harnessHydrateProxy) window.__harnessHydrateProxy();
 
         // Re-mount when the user changes context or record without reloading.
         ctxSel.addEventListener("change", () => mountWidget().catch(console.error));
