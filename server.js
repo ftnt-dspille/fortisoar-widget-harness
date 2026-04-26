@@ -8,11 +8,13 @@
 
 require("dotenv").config();
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
 const HU = require("./lib/harnessUtils");
 const http = require("http");
 const https = require("https");
 const crypto = require("crypto");
+const { spawn } = require("child_process");
 const { URL } = require("url");
 const express = require("express");
 const { createProxyMiddleware } = require("http-proxy-middleware");
@@ -186,6 +188,40 @@ function upstreamMultipart({ pathAndQuery, fields, file, headers }) {
   });
 }
 
+// Binary-safe upstream request. upstreamRequest concatenates response chunks
+// as utf8 strings, which corrupts gzip/tar bytes — so the widget-export flow
+// (which returns a .tgz) goes through this variant instead.
+function upstreamRequestBinary({ method, pathAndQuery, body, headers }) {
+  return new Promise((resolve, reject) => {
+    const url = new URL(HOST.replace(/\/$/, "") + pathAndQuery);
+    const mod = url.protocol === "https:" ? https : http;
+    const req = mod.request(
+      {
+        hostname: url.hostname,
+        port: url.port || (url.protocol === "https:" ? 443 : 80),
+        path: url.pathname + url.search,
+        method,
+        rejectUnauthorized: false,
+        headers: Object.assign(
+          { Accept: "*/*" },
+          body ? { "Content-Length": Buffer.byteLength(body) } : {},
+          headers || {}
+        ),
+      },
+      (res) => {
+        const chunks = [];
+        res.on("data", (c) => chunks.push(c));
+        res.on("end", () =>
+          resolve({ status: res.statusCode, body: Buffer.concat(chunks), headers: res.headers })
+        );
+      }
+    );
+    req.on("error", reject);
+    if (body) req.write(body);
+    req.end();
+  });
+}
+
 async function authenticate() {
   const body = JSON.stringify({
     credentials: { loginid: USER, password: PASS },
@@ -271,6 +307,48 @@ function scanStaleVersionRefs(widgetDir, name, version) {
   return out;
 }
 
+// Build a widget record for a single widgets-src/<folder>/widget directory.
+// Returns null if info.json is missing/invalid; caller decides whether to skip
+// or surface an error.
+function buildWidgetRecord(folder) {
+  const widgetDir = path.join(WIDGETS_SRC, folder, "widget");
+  const infoPath = path.join(widgetDir, "info.json");
+  if (!fs.existsSync(infoPath)) return null;
+  let info;
+  try {
+    info = JSON.parse(fs.readFileSync(infoPath, "utf8"));
+  } catch (err) {
+    console.warn(`skipping ${folder}: bad info.json (${err.message})`);
+    return null;
+  }
+  if (!info.name || !info.version) {
+    console.warn(`skipping ${folder}: info.json missing name or version`);
+    return null;
+  }
+  const readControllers = (file) => {
+    const p = path.join(widgetDir, file);
+    if (!fs.existsSync(p)) return [];
+    try {
+      return HU.extractRegisteredControllers(fs.readFileSync(p, "utf8"));
+    } catch (_) {
+      return [];
+    }
+  };
+  return {
+    folder,
+    dir: widgetDir,
+    id: `${info.name}-${info.version}`,
+    name: info.name,
+    version: info.version,
+    title: info.title || info.name,
+    subTitle: info.subTitle || "",
+    pages: (info.metadata && info.metadata.pages) || [],
+    viewControllers: readControllers("view.controller.js"),
+    editControllers: readControllers("edit.controller.js"),
+    staleVersionRefs: scanStaleVersionRefs(widgetDir, info.name, info.version),
+  };
+}
+
 function discoverWidgets() {
   if (!fs.existsSync(WIDGETS_SRC)) {
     console.warn(`widgets-src/ not found at ${WIDGETS_SRC}`);
@@ -280,41 +358,8 @@ function discoverWidgets() {
   const out = [];
   for (const e of entries) {
     if (!e.isDirectory()) continue;
-    const widgetDir = path.join(WIDGETS_SRC, e.name, "widget");
-    const infoPath = path.join(widgetDir, "info.json");
-    if (!fs.existsSync(infoPath)) continue;
-    try {
-      const info = JSON.parse(fs.readFileSync(infoPath, "utf8"));
-      if (!info.name || !info.version) {
-        console.warn(`skipping ${e.name}: info.json missing name or version`);
-        continue;
-      }
-      const readControllers = (file) => {
-        const p = path.join(widgetDir, file);
-        if (!fs.existsSync(p)) return [];
-        try {
-          return HU.extractRegisteredControllers(fs.readFileSync(p, "utf8"));
-        } catch (_) {
-          return [];
-        }
-      };
-      const staleVersionRefs = scanStaleVersionRefs(widgetDir, info.name, info.version);
-      out.push({
-        folder: e.name,
-        dir: widgetDir,
-        id: `${info.name}-${info.version}`,
-        name: info.name,
-        version: info.version,
-        title: info.title || info.name,
-        subTitle: info.subTitle || "",
-        pages: (info.metadata && info.metadata.pages) || [],
-        viewControllers: readControllers("view.controller.js"),
-        editControllers: readControllers("edit.controller.js"),
-        staleVersionRefs,
-      });
-    } catch (err) {
-      console.warn(`skipping ${e.name}: bad info.json (${err.message})`);
-    }
+    const rec = buildWidgetRecord(e.name);
+    if (rec) out.push(rec);
   }
   return out;
 }
@@ -490,7 +535,7 @@ for (const w of WIDGETS) w.lint = lintFor(w);
 // any change we re-extract metadata, re-run lint, and broadcast over SSE so
 // connected browsers can soft-remount without a full page reload.
 const HOT_RELOAD_FILES = new Set(["info.json", ...LINT_FILES]);
-for (const w of WIDGETS) {
+function attachWatcher(w) {
   let debounce = null;
   try {
     fs.watch(w.dir, { persistent: false }, (_event, filename) => {
@@ -506,6 +551,25 @@ for (const w of WIDGETS) {
   } catch (e) {
     console.warn(`watch failed for ${w.folder}: ${e.message}`);
   }
+}
+for (const w of WIDGETS) attachWatcher(w);
+
+// Register a freshly imported widget: build its record, lint, mount, watch,
+// and broadcast a widget-change so the connected browser refreshes its
+// dropdown. Throws if the folder isn't a valid widget on disk.
+function registerImportedWidget(folder) {
+  const w = buildWidgetRecord(folder);
+  if (!w) throw new Error(`widgets-src/${folder} is not a valid widget`);
+  if (widgetsById.has(w.id)) {
+    throw new Error(`widget id ${w.id} already exists; rename folder or bump version`);
+  }
+  WIDGETS.push(w);
+  widgetsById.set(w.id, w);
+  w.lint = lintFor(w);
+  mountWidget(w);
+  attachWatcher(w);
+  broadcast({ type: "widget-change", id: w.id, oldId: w.id, file: "imported", lint: w.lint });
+  return w;
 }
 
 function readCurrentInfo(widget) {
@@ -796,6 +860,149 @@ app.post("/_fsr/install/:id", express.json(), async (req, res) => {
   } catch (e) {
     console.error(`install failed for ${w.folder}: ${e.message}`);
     res.status(500).json({ error: e.message });
+  }
+});
+
+// List widgets installed on the proxied SOAR instance. The harness UI uses
+// this to populate the import picker. We pass the response through largely
+// unchanged so the picker can sort/filter on whatever fields it wants.
+app.get("/_fsr/remote-widgets", async (_req, res) => {
+  try {
+    const token = await ensureToken();
+    const result = await upstreamRequest({
+      method: "GET",
+      pathAndQuery: "/api/3/widgets?$limit=500",
+      headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+    });
+    if (result.status < 200 || result.status >= 300) {
+      return res.status(502).json({
+        error: `upstream ${result.status}`,
+        body: result.body.slice(0, 500),
+      });
+    }
+    let parsed;
+    try { parsed = JSON.parse(result.body); }
+    catch (e) { return res.status(502).json({ error: "non-JSON upstream response" }); }
+    const members = parsed["hydra:member"] || parsed.member || parsed.data || [];
+    const widgets = members.map((w) => ({
+      uuid: w.uuid,
+      name: w.name,
+      version: w.version,
+      title: w.title || w.name,
+      subTitle: w.subTitle || "",
+      section: (w.metadata && w.metadata.section) || w.section || "",
+      inbuilt: !!(w.inbuilt || w.systemManaged),
+    })).filter((w) => w.uuid);
+    widgets.sort((a, b) => a.title.localeCompare(b.title));
+    res.json({ widgets, total: widgets.length });
+  } catch (e) {
+    res.status(502).json({ error: e.message });
+  }
+});
+
+// Import a widget from SOAR: POST /api/3/widgets/export/<uuid> -> tgz, then
+// extract into widgets-src/<folder>/widget/. The folder argument must be a
+// safe slug; if omitted we derive one from the widget's name. Refuses to
+// overwrite an existing folder so the user has to consciously pick a new
+// slot when forking. After extract, the widget is hot-attached (lint, mount,
+// watch) and a widget-change SSE event is broadcast.
+const SAFE_FOLDER_RE = /^[a-zA-Z0-9_-]+$/;
+function deriveFolderName(name) {
+  return String(name || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "")
+    .slice(0, 64);
+}
+function extractTgz(tgzPath, destDir) {
+  return new Promise((resolve, reject) => {
+    const child = spawn("tar", ["-xzf", tgzPath, "-C", destDir], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stderr = "";
+    child.stderr.on("data", (c) => (stderr += c.toString()));
+    child.on("error", reject);
+    child.on("close", (code) =>
+      code === 0 ? resolve() : reject(new Error(`tar exit ${code}: ${stderr.trim()}`))
+    );
+  });
+}
+
+app.post("/_fsr/import/:uuid", express.json(), async (req, res) => {
+  const uuid = req.params.uuid;
+  if (!/^[a-zA-Z0-9-]+$/.test(uuid)) return res.status(400).json({ error: "bad uuid" });
+  const body = req.body || {};
+  const folderArg = body.folder ? String(body.folder).trim() : "";
+  if (folderArg && !SAFE_FOLDER_RE.test(folderArg)) {
+    return res.status(400).json({ error: "folder must match [A-Za-z0-9_-]+" });
+  }
+
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "fsr-import-"));
+  const tgzPath = path.join(tmp, "widget.tgz");
+  try {
+    const token = await ensureToken();
+    const exportRes = await upstreamRequestBinary({
+      method: "POST",
+      pathAndQuery: `/api/3/widgets/export/${uuid}`,
+      body: JSON.stringify({ development: false }),
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+        Accept: "application/octet-stream",
+      },
+    });
+    if (exportRes.status < 200 || exportRes.status >= 300) {
+      return res.status(502).json({
+        error: `export ${exportRes.status}`,
+        body: exportRes.body.slice(0, 300).toString("utf8"),
+      });
+    }
+    fs.writeFileSync(tgzPath, exportRes.body);
+    await extractTgz(tgzPath, tmp);
+
+    // tgz layout from SOAR mirrors the packager: a single root dir
+    // `<name>-<version>/` containing info.json, view.html, etc.
+    const entries = fs
+      .readdirSync(tmp)
+      .filter((n) => n !== "widget.tgz")
+      .map((n) => ({ n, full: path.join(tmp, n) }))
+      .filter((e) => fs.statSync(e.full).isDirectory());
+    if (entries.length !== 1) {
+      return res.status(502).json({
+        error: `unexpected tgz layout: ${entries.map((e) => e.n).join(", ") || "<empty>"}`,
+      });
+    }
+    const extracted = entries[0].full;
+    const infoPath = path.join(extracted, "info.json");
+    if (!fs.existsSync(infoPath)) {
+      return res.status(502).json({ error: "tgz missing info.json" });
+    }
+    const info = JSON.parse(fs.readFileSync(infoPath, "utf8"));
+    const folder = folderArg || deriveFolderName(info.name);
+    if (!folder) return res.status(400).json({ error: "could not derive folder name" });
+    const dest = path.join(WIDGETS_SRC, folder);
+    if (fs.existsSync(dest)) {
+      return res.status(409).json({ error: `widgets-src/${folder} already exists` });
+    }
+
+    fs.mkdirSync(dest, { recursive: true });
+    fs.cpSync(extracted, path.join(dest, "widget"), { recursive: true });
+
+    const w = registerImportedWidget(folder);
+    console.log(`import: ${info.name}-${info.version} -> widgets-src/${folder}`);
+    res.json({
+      ok: true,
+      folder,
+      id: w.id,
+      name: w.name,
+      version: w.version,
+      title: w.title,
+    });
+  } catch (e) {
+    console.error(`import failed for ${uuid}: ${e.message}`);
+    res.status(500).json({ error: e.message });
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
   }
 });
 
