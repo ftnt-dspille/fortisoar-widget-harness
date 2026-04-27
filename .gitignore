@@ -11,6 +11,7 @@ pnpm-debug.log*
 
 # Build / runtime output
 widget-packages/
+dev/cache/
 widgets-src/*
 !widgets-src/.gitkeep
 

@@ -24,6 +24,9 @@ const {
   isValidVersion,
   writeInfoVersion,
   syncSourceToInfoJson,
+  validateWidget,
+  suggestInfoFix,
+  applyInfoFix,
 } = require("./packager");
 
 const PORT = Number(process.env.PORT || 4400);
@@ -33,18 +36,110 @@ const PASS = process.env.FORTISOAR_PASSWORD;
 let PROXY_VERBOSE = process.env.PROXY_VERBOSE === "1";
 
 const HARNESS_MODULE_PATH = path.resolve(__dirname, "harness.module.js");
-let REGISTERED_SERVICES = (() => {
+const FSR_APP_PATH_FOR_LINT = path.resolve(__dirname, "..", "fsr_src", "app.unmin.js");
+// Services registered by the SOAR bundle; parsed once at startup. The bundle
+// is large (~2.5MB) so we don't watch/re-parse it. These ship to SOAR for real.
+const FSR_BUNDLE_SERVICES = (() => {
   try {
-    return HU.parseRegisteredServices(fs.readFileSync(HARNESS_MODULE_PATH, "utf8"));
-  } catch { return []; }
+    const svcs = HU.parseRegisteredServices(fs.readFileSync(FSR_APP_PATH_FOR_LINT, "utf8"));
+    console.log(`[lint] indexed ${svcs.length} services from fsr_src/app.unmin.js`);
+    return svcs;
+  } catch (e) {
+    console.warn(`[lint] failed to index app.unmin.js services: ${e.message}`);
+    return [];
+  }
 })();
+// Vendor modules loaded in index.html. Not in app.unmin.js or harness module.
+const VENDOR_PROVIDED_SERVICES = ["$resource"];
+// Real-in-SOAR set: present at install time without the widget shipping it.
+const PLATFORM_SERVICES = Array.from(
+  new Set([...FSR_BUNDLE_SERVICES, ...VENDOR_PROVIDED_SERVICES])
+);
+// Harness-only stub set: services registered solely by harness.module.js so
+// the local mount renders. Publish-time lint flags injection of these as a
+// real risk because SOAR will not have them unless the widget ships its own.
+function readHarnessStubbedServices() {
+  return HU.parseRegisteredServices(fs.readFileSync(HARNESS_MODULE_PATH, "utf8"));
+}
+let HARNESS_STUBBED_SERVICES = (() => {
+  try { return readHarnessStubbedServices(); } catch { return []; }
+})();
+// Permissive union retained for diagnostics / SSE broadcasts.
+let REGISTERED_SERVICES = Array.from(
+  new Set([...PLATFORM_SERVICES, ...HARNESS_STUBBED_SERVICES])
+);
 fs.watch(HARNESS_MODULE_PATH, { persistent: false }, () => {
   try {
-    REGISTERED_SERVICES = HU.parseRegisteredServices(fs.readFileSync(HARNESS_MODULE_PATH, "utf8"));
+    HARNESS_STUBBED_SERVICES = readHarnessStubbedServices();
+    REGISTERED_SERVICES = Array.from(
+      new Set([...PLATFORM_SERVICES, ...HARNESS_STUBBED_SERVICES])
+    );
     for (const w of WIDGETS) refreshWidget(w);
     broadcast({ type: "harness-reload", services: REGISTERED_SERVICES });
   } catch (e) { console.warn(`harness.module.js reload failed: ${e.message}`); }
 });
+
+// Per-widget: parse <script src="…"> tags from view.html/edit.html, follow
+// each to a real file inside the widget tree, and union the .factory/
+// .service/etc. names declared there. These are the only widget-local
+// services that actually ship to SOAR (the templates load them at runtime).
+const WIDGET_LOCAL_SCRIPT_RE = /<script\b[^>]*\bsrc\s*=\s*["']([^"']+)["'][^>]*>/gi;
+// Build a map of `serviceName -> "widgetAssets/.../file.js"` by parsing every
+// .js file under widgetAssets/. Used by the linter to suggest the exact
+// <script> tag to paste when a controller injects a service whose factory
+// lives in widgetAssets but isn't <script>-tagged from view.html / edit.html.
+function widgetAssetServiceMap(widgetDir) {
+  const out = {};
+  const root = path.join(widgetDir, "widgetAssets");
+  if (!fs.existsSync(root)) return out;
+  const walk = (dir, rel) => {
+    let entries;
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      const sub = rel ? `${rel}/${e.name}` : e.name;
+      if (e.isDirectory()) walk(path.join(dir, e.name), sub);
+      else if (e.isFile() && e.name.endsWith(".js")) {
+        try {
+          const js = fs.readFileSync(path.join(dir, e.name), "utf8");
+          for (const name of HU.parseRegisteredServices(js)) {
+            if (!(name in out)) out[name] = "widgetAssets/" + sub;
+          }
+        } catch { /* skip unreadable file */ }
+      }
+    }
+  };
+  walk(root, "");
+  return out;
+}
+
+function widgetLocalServicesFor(widgetDir) {
+  const out = new Set();
+  for (const tpl of ["view.html", "edit.html"]) {
+    let html = "";
+    try { html = fs.readFileSync(path.join(widgetDir, tpl), "utf8"); } catch { continue; }
+    let m;
+    while ((m = WIDGET_LOCAL_SCRIPT_RE.exec(html)) !== null) {
+      const src = m[1];
+      if (/^https?:\/\//i.test(src) || src.startsWith("//")) continue; // CDN — ships nothing local
+      // SOAR serves widget assets under `<name>-<version>/...`. The src in
+      // view.html uses that prefix; the source tree doesn't. Try both.
+      const candidates = [
+        path.join(widgetDir, src),
+        path.join(widgetDir, src.replace(/^[^/]+\//, "")),
+      ];
+      for (const p of candidates) {
+        try {
+          if (fs.existsSync(p) && fs.statSync(p).isFile()) {
+            const js = fs.readFileSync(p, "utf8");
+            for (const name of HU.parseRegisteredServices(js)) out.add(name);
+            break;
+          }
+        } catch { /* ignore + try next candidate */ }
+      }
+    }
+  }
+  return Array.from(out);
+}
 
 // Lint context files we read off disk per widget.
 const LINT_FILES = ["view.controller.js", "edit.controller.js", "view.html", "edit.html"];
@@ -66,7 +161,12 @@ function lintFor(widget) {
   return HU.lintWidget({
     info,
     files: readLintFiles(widget.dir),
-    registeredServices: REGISTERED_SERVICES,
+    // Real-in-SOAR services. Anything not in here (and not in widgetLocal)
+    // either fails publish-time or only works locally as a harness stub.
+    registeredServices: PLATFORM_SERVICES,
+    harnessStubbedServices: HARNESS_STUBBED_SERVICES,
+    widgetLocalServices: widgetLocalServicesFor(widget.dir),
+    widgetAssetServiceMap: widgetAssetServiceMap(widget.dir),
     staleVersionRefs: widget.staleVersionRefs || [],
     viewControllers: widget.viewControllers || [],
     editControllers: widget.editControllers || [],
@@ -345,8 +445,30 @@ function buildWidgetRecord(folder) {
     pages: (info.metadata && info.metadata.pages) || [],
     viewControllers: readControllers("view.controller.js"),
     editControllers: readControllers("edit.controller.js"),
+    assetScripts: scanAssetScripts(widgetDir),
     staleVersionRefs: scanStaleVersionRefs(widgetDir, info.name, info.version),
   };
+}
+
+// Recursively list .js files under widgetAssets/ (relative paths). The
+// harness loads these before bootstrap so widget-local services like
+// chartService are registered alongside view/edit controllers.
+function scanAssetScripts(widgetDir) {
+  const root = path.join(widgetDir, "widgetAssets");
+  if (!fs.existsSync(root)) return [];
+  const out = [];
+  const walk = (dir, rel) => {
+    let entries;
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); }
+    catch { return; }
+    for (const e of entries) {
+      const sub = rel ? `${rel}/${e.name}` : e.name;
+      if (e.isDirectory()) walk(path.join(dir, e.name), sub);
+      else if (e.isFile() && e.name.endsWith(".js")) out.push("widgetAssets/" + sub);
+    }
+  };
+  walk(root, "");
+  return out;
 }
 
 function discoverWidgets() {
@@ -453,6 +575,162 @@ app.use(
   express.static(path.resolve(__dirname, "lib"), { etag: false, cacheControl: false })
 );
 
+// Serve SOAR\'s extracted UI templates (templateUrl: "app/components/...").
+// Otherwise these resolve via the proxy, which returns SOAR\'s SPA shell on
+// any unauthenticated request and breaks Angular\'s template parser
+// (Cannot read properties of undefined when csChart\'s template fails to
+// produce a real fragment). Falls through to the proxy on miss so we still
+// hit the live host for assets we haven\'t extracted.
+app.use(
+  "/app",
+  express.static(path.resolve(__dirname, "..", "fsr_src", "templates-extracted", "app"), {
+    etag: false,
+    cacheControl: false,
+    fallthrough: true,
+  })
+);
+
+// Serve fsr_src/app.unmin.js with the cybersponse module's dep array stripped
+// so the harness can register an empty cybersponse module without dragging in
+// ~50 vendor/fortisoar.* sub-modules. The on-disk file stays pristine.
+const FSR_APP_PATH = path.resolve(__dirname, "..", "fsr_src", "app.unmin.js");
+let FSR_APP_PATCHED = null;
+function loadPatchedFsrApp() {
+  if (FSR_APP_PATCHED) return FSR_APP_PATCHED;
+  const src = fs.readFileSync(FSR_APP_PATH, "utf8");
+  // Vendor angular modules we DO load (from CDN, before app.unmin.js) and
+  // therefore want as cybersponse dep so their providers ($resource, etc.)
+  // are visible in the bundle\'s factories. Add new entries as we add the
+  // matching <script> tags in index.html. Keep this minimal — the rest of
+  // SOAR\'s ~50 dep modules stay stripped and dealt with via stubs/no-ops.
+  // All fortisoar.* and cybersponse.authentication sub-modules are actually
+  // defined inside app.unmin.js — they were stripped along with vendor deps
+  // by the empty-deps patch. Add them back so their factories (translationService,
+  // etc.) are visible to cybersponse\'s injector.
+  const HARNESS_VENDOR_DEPS = [
+    "ngResource",
+    "ngMessages",
+    "ui.bootstrap",
+    "ui.select",
+    "ngSanitize",
+    "angularMoment",
+    "ngFileUpload",
+    "cybersponse.authentication",
+    "fortisoar.global",
+    "fortisoar.globalization",
+    "fortisoar.queues",
+    "fortisoar.archival",
+    "fortisoar.marketplace",
+    "fortisoar.dataIngestion",
+    "fortisoar.notification",
+    "fortisoar.preProcessing",
+    "fortisoar.phishing-email-classifier",
+  ];
+  const depsLiteral = JSON.stringify(HARNESS_VENDOR_DEPS).replace(/"/g, '"');
+  const patched = src.replace(
+    /angular\.module\("cybersponse",\s*\[[^\]]*\]\)/,
+    `angular.module("cybersponse", ${depsLiteral})`
+  );
+  if (patched === src) {
+    console.warn("[/_fsr/app.unmin.js] WARNING: dep-array patch did not match");
+  } else {
+    console.log("[/_fsr/app.unmin.js] patched cybersponse module deps -> []");
+  }
+  // The bundle dereferences a few vendor globals at script-load (outside any
+  // angular.config callback), so we have to satisfy them before the bundle
+  // body runs or it throws and the cybersponse module never gets created.
+  // Each stub here was added in response to a real boot-time TypeError; keep
+  // them no-ops unless something actually needs the vendor's behavior.
+  const prelude = [
+    '// --- harness shim prelude (injected by server.js) ---',
+    'window["@uirouter/sticky-states"] = window["@uirouter/sticky-states"] || { StickyStatesPlugin: function () {} };',
+    // Neutralize the bundle\'s .config and .run calls on cybersponse: they',
+    // inject vendor providers ($urlRouterProvider, $breadcrumbProvider,',
+    // localStorageServiceProvider, etc.) and SOAR services',
+    // (appInitializeService, stateService) we don\'t have. We restore the',
+    // real .config/.run in the epilogue so harness.module.js can still use',
+    // them. Wrap angular.module so any reference to "cybersponse" returns',
+    // a module whose .config/.run are no-ops during bundle load.',
+    '(function(){',
+    '  var origModule = angular.module;',
+    '  var neutralized = [];',
+    '  function shouldNeutralize(name){',
+    '    return name === "cybersponse" || name === "cybersponse.authentication" || name.indexOf("fortisoar.") === 0;',
+    '  }',
+    '  angular.module = function(name, requires, configFn) {',
+    '    var mod = origModule.apply(this, arguments);',
+    '    if (shouldNeutralize(name) && !mod.__harnessNeutralized) {',
+    '      mod.__harnessNeutralized = true;',
+    '      mod.__origConfig = mod.config;',
+    '      mod.__origRun = mod.run;',
+    '      mod.config = function(){ return mod; };',
+    '      mod.run = function(){ return mod; };',
+    '      neutralized.push(name);',
+    '    }',
+    '    return mod;',
+    '  };',
+    '  window.__harnessRestoreCybersponse = function(){',
+    '    for (var i = 0; i < neutralized.length; i++) {',
+    '      var n = neutralized[i];',
+    '      var mod = origModule.call(angular, n);',
+    '      if (mod && mod.__harnessNeutralized) {',
+    '        mod.config = mod.__origConfig;',
+    '        mod.run = mod.__origRun;',
+    '        delete mod.__harnessNeutralized;',
+    '      }',
+    '    }',
+    '    console.log("[harness] restored .config/.run on " + neutralized.length + " modules: " + neutralized.join(", "));',
+    '    angular.module = origModule;',
+    '  };',
+    '})();',
+    '// --- end shim prelude ---',
+    '',
+  ].join('\n');
+  const epilogue = [
+    '',
+    '// --- harness shim epilogue (injected by server.js) ---',
+    'try { window.__harnessRestoreCybersponse && window.__harnessRestoreCybersponse(); }',
+    'catch (e) { console.error("[harness] restore failed", e); }',
+    '// --- end shim epilogue ---',
+    '',
+  ].join('\n');
+  FSR_APP_PATCHED = prelude + patched + epilogue;
+  return FSR_APP_PATCHED;
+}
+app.get("/_fsr/app.unmin.js", (_req, res) => {
+  try {
+    const body = loadPatchedFsrApp();
+    res.set("Content-Type", "application/javascript; charset=utf-8");
+    res.set("Cache-Control", "no-store");
+    res.send(body);
+  } catch (e) {
+    res.status(500).type("text/plain").send(`failed to load app.unmin.js: ${e.message}`);
+  }
+});
+
+// Templates bundle: includes $templateCache.put(...) calls for SOAR templates
+// like lookupPopover.html, required by csTypeahead + cs-conditional directives
+// when uibPopover needs the template. This must load AFTER app.unmin.js but can
+// load before or after harness.module.js (it only registers templates, doesn't
+// require real Angular services).
+app.get("/_fsr/templates.min.js", (_req, res) => {
+  try {
+    const body = fs.readFileSync(
+      path.resolve(__dirname, "..", "fsr_src", "templates.min.a64ddbd8.js"),
+      "utf8"
+    );
+    // The dangling `||` in SOAR's ui-select-choices ng-show is intentional:
+    // ui-select 0.20.0's link step appends `$select.open && $select.items.length > 0`,
+    // completing the expression. Stripping the `||` leaves two expressions
+    // glued together and trips $parse (syntax error).
+    res.set("Content-Type", "application/javascript; charset=utf-8");
+    res.set("Cache-Control", "no-store");
+    res.send(body);
+  } catch (e) {
+    res.status(500).type("text/plain").send(`failed to load templates: ${e.message}`);
+  }
+});
+
 // Paths we serve locally; the proxy skips these.
 const LOCAL_PATHS = new Set(["/", "/index.html", "/harness.module.js"]);
 function isLocalPath(p) {
@@ -474,6 +752,7 @@ app.get("/_fsr/widgets", (_req, res) => {
       pages: w.pages,
       viewControllers: w.viewControllers || [],
       editControllers: w.editControllers || [],
+      assetScripts: w.assetScripts || [],
       staleVersionRefs: w.staleVersionRefs || [],
       lint: w.lint || { errors: [], warnings: [] },
     })),
@@ -521,6 +800,113 @@ app.delete("/_fsr/proxy-log", (_req, res) => {
   PROXY_LOG.length = 0;
   broadcast({ type: "proxy-clear" });
   res.json({ ok: true });
+});
+
+// ---------------------------------------------------------------------------
+// Disk cache for slow, idempotent preload calls (translations + metadata).
+// In `cached` mode the harness serves from dev/cache/ on hit and fetches
+// upstream + writes the cache on miss. In `live` mode the middleware no-ops
+// and every request goes straight to the proxy. Toggle persists across
+// restarts so devs keep their choice.
+// ---------------------------------------------------------------------------
+const CACHE_DIR = path.resolve(__dirname, "dev", "cache");
+const CACHE_MODE_FILE = path.join(CACHE_DIR, "mode.json");
+const CACHEABLE_PATTERNS = [
+  /^\/locales\/static\/en\.json$/,
+  /^\/api\/3\/model_metadatas(?:\?|$)/,
+  /^\/api\/locale\/1\/[^/]+\/en\.json$/,
+];
+function isCacheable(url) {
+  return CACHEABLE_PATTERNS.some((re) => re.test(url));
+}
+function readCacheMode() {
+  try {
+    const j = JSON.parse(fs.readFileSync(CACHE_MODE_FILE, "utf8"));
+    return j.mode === "live" ? "live" : "cached";
+  } catch { return "cached"; }
+}
+function writeCacheMode(mode) {
+  fs.mkdirSync(CACHE_DIR, { recursive: true });
+  fs.writeFileSync(CACHE_MODE_FILE, JSON.stringify({ mode }));
+}
+let CACHE_MODE = readCacheMode();
+function cacheFileFor(url) {
+  const h = crypto.createHash("sha1").update(url).digest("hex");
+  return path.join(CACHE_DIR, h + ".json");
+}
+function readCacheEntry(url) {
+  try { return JSON.parse(fs.readFileSync(cacheFileFor(url), "utf8")); }
+  catch { return null; }
+}
+function writeCacheEntry(url, entry) {
+  fs.mkdirSync(CACHE_DIR, { recursive: true });
+  fs.writeFileSync(cacheFileFor(url), JSON.stringify(entry));
+}
+
+app.get("/_fsr/cache/mode", (_req, res) => {
+  res.json({ mode: CACHE_MODE });
+});
+app.post("/_fsr/cache/mode", express.json(), (req, res) => {
+  const mode = req.body && req.body.mode === "live" ? "live" : "cached";
+  CACHE_MODE = mode;
+  try { writeCacheMode(mode); } catch (e) {
+    return res.status(500).json({ error: e.message });
+  }
+  res.json({ mode });
+});
+app.delete("/_fsr/cache", (_req, res) => {
+  try {
+    if (fs.existsSync(CACHE_DIR)) {
+      for (const f of fs.readdirSync(CACHE_DIR)) {
+        if (f.endsWith(".json") && f !== "mode.json") {
+          fs.unlinkSync(path.join(CACHE_DIR, f));
+        }
+      }
+    }
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.use(async (req, res, next) => {
+  if (req.method !== "GET") return next();
+  if (CACHE_MODE !== "cached") return next();
+  if (!isCacheable(req.originalUrl)) return next();
+
+  const url = req.originalUrl;
+  const hit = readCacheEntry(url);
+  if (hit) {
+    console.log(`<- 200 ${url}  (cache hit)`);
+    res.setHeader("X-Harness-Cache", "hit");
+    res.setHeader("Content-Type", hit.contentType || "application/json");
+    return res.status(hit.status || 200).send(hit.body || "");
+  }
+  try {
+    await ensureToken().catch(() => {});
+    const headers = { Accept: "application/json" };
+    if (cachedToken) headers.Authorization = `Bearer ${cachedToken}`;
+    const upstream = await upstreamRequest({ method: "GET", pathAndQuery: url, headers });
+    if (upstream.status >= 200 && upstream.status < 300) {
+      const entry = {
+        url,
+        status: upstream.status,
+        contentType: "application/json",
+        body: upstream.body,
+        savedAt: Date.now(),
+      };
+      try { writeCacheEntry(url, entry); } catch (_) {}
+      console.log(`<- ${upstream.status} ${url}  (cache miss → stored)`);
+      res.setHeader("X-Harness-Cache", "miss-stored");
+      res.setHeader("Content-Type", "application/json");
+      return res.status(upstream.status).send(upstream.body);
+    }
+    console.warn(`<- ${upstream.status} ${url}  (cache miss, not stored)`);
+    res.setHeader("X-Harness-Cache", "miss-bypass");
+    res.setHeader("Content-Type", "application/json");
+    return res.status(upstream.status).send(upstream.body);
+  } catch (e) {
+    console.warn(`xx cache fetch ${url}: ${e.message}`);
+    return next();
+  }
 });
 
 const PACKAGE_OUTPUT_DIR = process.env.PACKAGE_OUTPUT_DIR
@@ -676,17 +1062,60 @@ function blockingLintErrors(w) {
   return errs;
 }
 
+// Applies a JSON merge patch to the widget's info.json. Intended to be called
+// by the harness UI after a 400 from /_fsr/package or /_fsr/install — the
+// failure response includes a `suggestedFix` patch the user can review and
+// POST back here. Body: { patch: <object> }. Refuses any patch that wouldn't
+// clear validation errors so we never silently introduce something invalid.
+app.post("/_fsr/fix-info/:id", express.json(), (req, res) => {
+  const w = widgetsById.get(req.params.id);
+  if (!w) return res.status(404).json({ error: "unknown widget id" });
+  const patch = req.body && req.body.patch;
+  if (!patch || typeof patch !== "object" || Array.isArray(patch)) {
+    return res.status(400).json({ error: "body.patch must be an object" });
+  }
+  try {
+    const { info, infoPath } = readCurrentInfo(w);
+    // Sanity check: the patch must only touch known-safe keys (currently
+    // metadata.* fields the validator can suggest defaults for). Block any
+    // attempt to rewrite name/version/etc through this endpoint.
+    const allowedTopLevel = new Set(["metadata"]);
+    const allowedMetaKeys = new Set(["windowClass", "size", "standalone", "pages"]);
+    for (const k of Object.keys(patch)) {
+      if (!allowedTopLevel.has(k)) {
+        return res.status(400).json({ error: `patch key '${k}' not allowed` });
+      }
+      if (k === "metadata") {
+        for (const mk of Object.keys(patch.metadata || {})) {
+          if (!allowedMetaKeys.has(mk)) {
+            return res.status(400).json({ error: `patch metadata.${mk} not allowed` });
+          }
+        }
+      }
+    }
+    const updated = applyInfoFix(infoPath, patch);
+    const after = validateWidget(w.dir, updated);
+    console.log(`fix-info: ${w.folder} patched ${JSON.stringify(patch)}`);
+    res.json({
+      ok: true,
+      info: updated,
+      validation: after,
+    });
+  } catch (e) {
+    console.error(`fix-info failed for ${w.folder}: ${e.message}`);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.post("/_fsr/package/:id", express.json(), async (req, res) => {
   const w = widgetsById.get(req.params.id);
   if (!w) return res.status(404).json({ error: "unknown widget id" });
 
   const body = req.body || {};
-  if (!body.skipLint) {
-    const errs = blockingLintErrors(w);
-    if (errs.length > 0) {
-      return res.status(400).json({ error: "lint failed", lint: { errors: errs } });
-    }
-  }
+  // Lint runs AFTER the version sync below — running it here against the
+  // pre-bump source would block on stale-version-ref every time the user
+  // typed a new version into the bump form, even though syncSourceToInfoJson
+  // would have rewritten the references a few lines later. Order matters.
   try {
     const { info, infoPath } = readCurrentInfo(w);
     let version = info.version;
@@ -710,6 +1139,24 @@ app.post("/_fsr/package/:id", express.json(), async (req, res) => {
       // SOAR's derived `<name><digits>DevCtrl` expectation.
       syncSourceToInfoJson(w.dir, info.name, version);
       console.log(`package: ${w.folder} version ${info.version} -> ${version}`);
+    }
+
+    if (!body.skipLint) {
+      const errs = blockingLintErrors(w);
+      if (errs.length > 0) {
+        return res.status(400).json({ error: "lint failed", lint: { errors: errs } });
+      }
+    }
+
+    const freshInfoForValidation = readCurrentInfo(w).info;
+    const preflight = validateWidget(w.dir, freshInfoForValidation);
+    if (preflight.errors.length > 0) {
+      return res.status(400).json({
+        error: "widget validation failed",
+        validation: preflight,
+        suggestedFix: suggestInfoFix(freshInfoForValidation),
+        fixEndpoint: `/_fsr/fix-info/${req.params.id}`,
+      });
     }
 
     const result = await packageWidget(w.dir, PACKAGE_OUTPUT_DIR);
@@ -738,12 +1185,7 @@ app.post("/_fsr/install/:id", express.json(), async (req, res) => {
   if (!w) return res.status(404).json({ error: "unknown widget id" });
 
   const body = req.body || {};
-  if (!body.skipLint) {
-    const errs = blockingLintErrors(w);
-    if (errs.length > 0) {
-      return res.status(400).json({ error: "lint failed", lint: { errors: errs } });
-    }
-  }
+  // Lint runs AFTER the version sync below, same reasoning as /_fsr/package.
   try {
     const { info, infoPath } = readCurrentInfo(w);
     let version = info.version;
@@ -762,6 +1204,27 @@ app.post("/_fsr/install/:id", express.json(), async (req, res) => {
       writeInfoVersion(infoPath, version);
       syncSourceToInfoJson(w.dir, info.name, version);
       console.log(`install: ${w.folder} version ${info.version} -> ${version}`);
+    }
+
+    if (!body.skipLint) {
+      const errs = blockingLintErrors(w);
+      if (errs.length > 0) {
+        return res.status(400).json({ error: "lint failed", lint: { errors: errs } });
+      }
+    }
+
+    const freshInfoForValidation = readCurrentInfo(w).info;
+    const preflight = validateWidget(w.dir, freshInfoForValidation);
+    if (preflight.errors.length > 0) {
+      console.warn(
+        `install: validation failed for ${w.folder}: ${preflight.errors.join("; ")}`
+      );
+      return res.status(400).json({
+        error: "widget validation failed",
+        validation: preflight,
+        suggestedFix: suggestInfoFix(freshInfoForValidation),
+        fixEndpoint: `/_fsr/fix-info/${req.params.id}`,
+      });
     }
 
     const pkg = await packageWidget(w.dir, PACKAGE_OUTPUT_DIR);
@@ -1039,6 +1502,13 @@ app.get("/_fsr/stylesheets", async (_req, res) => {
 });
 
 async function ensureAuthMiddleware(req, res, next) {
+  // Fast path: if a non-expired token is cached, call next() synchronously.
+  // Awaiting an already-resolved promise still defers to a microtask, which
+  // is enough to break http-proxy-middleware v3 POST body streaming on some
+  // Node versions (browser sees ERR_EMPTY_RESPONSE after proxyTimeout).
+  if (cachedToken && Date.now() < tokenExpiry - REFRESH_SKEW_MS) {
+    return next();
+  }
   try {
     await ensureToken();
     next();

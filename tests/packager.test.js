@@ -9,7 +9,24 @@ const {
   writeInfoVersion,
   rewriteForVersion,
   packageWidget,
+  validateInfoMetadata,
+  validateControllers,
+  validateWidget,
+  suggestInfoFix,
+  applyInfoFix,
 } = require("../packager");
+
+// Minimal info.json metadata block that satisfies validateInfoMetadata.
+function validMetadata(extra = {}) {
+  return {
+    windowClass: "Full Width",
+    size: "lg",
+    standalone: false,
+    pages: ["Dashboard"],
+    compatibility: ["7.6.0"],
+    ...extra,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // bumpVersion
@@ -118,6 +135,7 @@ describe("rewriteForVersion", () => {
       path.join(dir, "edit.controller.js"),
       `angular.module("cybersponse").controller("editmyWidget100DevCtrl", ctrl);\n`
     );
+    // noinspection XmlUnresolvedReference
     fs.writeFileSync(
       path.join(dir, "view.html"),
       `<div ng-controller="myWidget-1.0.0/someref">hello</div>\n`
@@ -172,19 +190,27 @@ describe("rewriteForVersion", () => {
 describe("packageWidget", () => {
   let srcDir, outDir;
 
-  function makeFullWidget(dir, name, version) {
+  function makeFullWidget(dir, name, version, infoOverrides = {}) {
     fs.mkdirSync(dir, { recursive: true });
-    const info = { name, version, title: name };
+    const cap = name.charAt(0).toUpperCase() + name.slice(1);
+    const digits = version.replace(/\./g, "");
+    const info = {
+      name,
+      version,
+      title: name,
+      metadata: validMetadata(),
+      ...infoOverrides,
+    };
     fs.writeFileSync(path.join(dir, "info.json"), JSON.stringify(info, null, 2));
     fs.writeFileSync(path.join(dir, "view.html"), "<div>view</div>");
     fs.writeFileSync(path.join(dir, "edit.html"), "<div>edit</div>");
     fs.writeFileSync(
       path.join(dir, "view.controller.js"),
-      `angular.module("cybersponse").controller("${name}100Ctrl", function(){});\n`
+      `angular.module("cybersponse").controller("${cap}${digits}Ctrl", function(){});\n`
     );
     fs.writeFileSync(
       path.join(dir, "edit.controller.js"),
-      `angular.module("cybersponse").controller("edit${name}100Ctrl", function(){});\n`
+      `angular.module("cybersponse").controller("edit${cap}${digits}Ctrl", function(){});\n`
     );
   }
 
@@ -232,5 +258,206 @@ describe("packageWidget", () => {
     const result = await packageWidget(srcDir, outDir);
     expect(result.archiveName).toBe("testWidget-1.0.0.tgz");
     expect(fs.existsSync(result.archivePath)).toBe(true);
+  });
+
+  test("rejects widget missing metadata.pages (required by SOAR registry)", async () => {
+    makeFullWidget(srcDir, "testWidget", "1.0.0", { metadata: {} });
+    await expect(packageWidget(srcDir, outDir)).rejects.toThrow(
+      /widget validation failed[\s\S]*metadata\.pages/
+    );
+  });
+
+  test("packages successfully when only optional metadata is missing", async () => {
+    makeFullWidget(srcDir, "testWidget", "1.0.0", {
+      metadata: { pages: ["Dashboard"] }, // no windowClass/size/standalone
+    });
+    const result = await packageWidget(srcDir, outDir);
+    expect(result.archiveName).toBe("testWidget-1.0.0.tgz");
+    expect(result.warnings.some((w) => /windowClass/.test(w))).toBe(true);
+  });
+
+  test("rejects widget whose controller version digits drift from info.json", async () => {
+    makeFullWidget(srcDir, "testWidget", "1.0.0");
+    // Hand-edit info.json to a different version *without* re-running rewrite,
+    // simulating someone bumping the version but skipping the controller sync.
+    const infoPath = path.join(srcDir, "info.json");
+    const info = JSON.parse(fs.readFileSync(infoPath, "utf8"));
+    info.version = "2.0.0";
+    fs.writeFileSync(infoPath, JSON.stringify(info, null, 2));
+    // packageWidget runs rewriteForVersion internally so it self-heals — to
+    // trigger the drift error we have to bypass it. Confirm validateWidget
+    // catches the drift directly instead.
+    const report = validateWidget(srcDir, info);
+    expect(report.errors.some((e) => /version digits/.test(e))).toBe(true);
+  });
+});
+
+describe("validateInfoMetadata", () => {
+  test("accepts a fully-populated info.json", () => {
+    const info = { name: "w", version: "1.0.0", metadata: validMetadata() };
+    const r = validateInfoMetadata(info);
+    expect(r.errors).toEqual([]);
+  });
+
+  test("only metadata.pages is a hard error; windowClass/size/standalone are warnings", () => {
+    const info = { name: "w", version: "1.0.0", metadata: { compatibility: ["7.6.0"] } };
+    const r = validateInfoMetadata(info);
+    expect(r.errors).toEqual(
+      expect.arrayContaining([expect.stringMatching(/metadata\.pages/)])
+    );
+    expect(r.errors.some((e) => /windowClass|size|standalone/.test(e))).toBe(false);
+    expect(r.warnings).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/windowClass/),
+        expect.stringMatching(/size/),
+        expect.stringMatching(/standalone/),
+      ])
+    );
+  });
+
+  test("flags missing metadata block entirely", () => {
+    const r = validateInfoMetadata({ name: "w", version: "1.0.0" });
+    expect(r.errors).toEqual(
+      expect.arrayContaining([expect.stringMatching(/missing 'metadata'/)])
+    );
+  });
+
+  test("flags invalid version", () => {
+    const r = validateInfoMetadata({ name: "w", version: "v1.0", metadata: validMetadata() });
+    expect(r.errors).toEqual(
+      expect.arrayContaining([expect.stringMatching(/invalid version/)])
+    );
+  });
+
+  test("warns (does not error) on missing publisher / category / compatibility", () => {
+    const info = {
+      name: "w",
+      version: "1.0.0",
+      metadata: { windowClass: "Full Width", size: "lg", standalone: false, pages: ["Dashboard"] },
+    };
+    const r = validateInfoMetadata(info);
+    expect(r.errors).toEqual([]);
+    expect(r.warnings).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/compatibility/),
+        expect.stringMatching(/category/),
+        expect.stringMatching(/publisher/),
+      ])
+    );
+  });
+});
+
+describe("validateControllers", () => {
+  let dir;
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "fsr-vctrl-"));
+  });
+  afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  function writeCtrls(viewName, editName) {
+    fs.writeFileSync(
+      path.join(dir, "view.controller.js"),
+      `angular.module("cybersponse").controller("${viewName}", function(){});\n`
+    );
+    fs.writeFileSync(
+      path.join(dir, "edit.controller.js"),
+      `angular.module("cybersponse").controller("${editName}", function(){});\n`
+    );
+  }
+
+  test("accepts matched DevCtrl pair", () => {
+    writeCtrls("MyWidget123DevCtrl", "editMyWidget123DevCtrl");
+    const r = validateControllers(dir, { name: "myWidget", version: "1.2.3" });
+    expect(r.errors).toEqual([]);
+  });
+
+  test("accepts non-Dev variant (post-publish form)", () => {
+    writeCtrls("MyWidget123Ctrl", "editMyWidget123Ctrl");
+    const r = validateControllers(dir, { name: "myWidget", version: "1.2.3" });
+    expect(r.errors).toEqual([]);
+  });
+
+  test("flags version-digit drift between info.json and controller name", () => {
+    writeCtrls("MyWidget100DevCtrl", "editMyWidget100DevCtrl");
+    const r = validateControllers(dir, { name: "myWidget", version: "1.2.3" });
+    expect(r.errors.length).toBeGreaterThanOrEqual(2);
+    expect(r.errors.every((e) => /version digits/.test(e))).toBe(true);
+  });
+
+  test("flags missing .controller(...) registration", () => {
+    fs.writeFileSync(path.join(dir, "view.controller.js"), "// no controller here\n");
+    fs.writeFileSync(path.join(dir, "edit.controller.js"), "// nothing\n");
+    const r = validateControllers(dir, { name: "myWidget", version: "1.0.0" });
+    expect(r.errors.some((e) => /no \.controller/.test(e))).toBe(true);
+  });
+
+  test("flags wrongly-shaped controller name (e.g. wrong widget name)", () => {
+    writeCtrls("OtherWidget100DevCtrl", "editOtherWidget100DevCtrl");
+    const r = validateControllers(dir, { name: "myWidget", version: "1.0.0" });
+    expect(r.errors.some((e) => /no controller matches/.test(e))).toBe(true);
+  });
+});
+
+describe("suggestInfoFix", () => {
+  test("returns null when no fixable errors", () => {
+    expect(suggestInfoFix({ name: "w", version: "1.0.0", metadata: validMetadata() })).toBeNull();
+  });
+
+  test("suggests pages default when missing", () => {
+    const patch = suggestInfoFix({ name: "w", version: "1.0.0", metadata: {} });
+    expect(patch).toEqual({ metadata: { pages: ["Dashboard", "View Panel"] } });
+  });
+
+  test("returns null when only optional fields are missing", () => {
+    const patch = suggestInfoFix({
+      name: "w", version: "1.0.0",
+      metadata: { pages: ["Dashboard"] }, // no windowClass/size/standalone — those are warnings, not auto-suggested
+    });
+    expect(patch).toBeNull();
+  });
+
+  test("handles missing metadata block entirely", () => {
+    const patch = suggestInfoFix({ name: "w", version: "1.0.0" });
+    expect(patch.metadata.pages).toEqual(["Dashboard", "View Panel"]);
+  });
+
+  test("applying the suggestion clears all fixable errors", () => {
+    const info = { name: "w", version: "1.0.0", metadata: { compatibility: ["7.6.0"] } };
+    const patch = suggestInfoFix(info);
+    // Simulate apply (deep merge):
+    info.metadata = { ...info.metadata, ...patch.metadata };
+    expect(validateInfoMetadata(info).errors).toEqual([]);
+  });
+});
+
+describe("applyInfoFix", () => {
+  let dir, infoPath;
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "fsr-fix-"));
+    infoPath = path.join(dir, "info.json");
+  });
+  afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("deep-merges patch into existing info.json", () => {
+    fs.writeFileSync(
+      infoPath,
+      JSON.stringify({ name: "w", version: "1.0.0", metadata: { compatibility: ["7.6.0"] } }, null, 2)
+    );
+    applyInfoFix(infoPath, { metadata: { windowClass: "Full Width", size: "lg", standalone: false, pages: ["Dashboard"] } });
+    const after = JSON.parse(fs.readFileSync(infoPath, "utf8"));
+    expect(after.metadata.compatibility).toEqual(["7.6.0"]); // preserved
+    expect(after.metadata.windowClass).toBe("Full Width");   // added
+    expect(after.metadata.size).toBe("lg");
+    expect(after.name).toBe("w");                            // untouched
+  });
+
+  test("preserves trailing newline", () => {
+    fs.writeFileSync(infoPath, JSON.stringify({ name: "w", version: "1.0.0", metadata: {} }, null, 2) + "\n");
+    applyInfoFix(infoPath, { metadata: { standalone: false } });
+    expect(fs.readFileSync(infoPath, "utf8").endsWith("\n")).toBe(true);
   });
 });

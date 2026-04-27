@@ -381,6 +381,16 @@
         <input type="checkbox" id="load-fsr-css" />
         Load FortiSOAR CSS
       </label>
+      <label title="Override the view-panel max width. SOAR's real view panel is ~880px; loosen this when a widget needs more room.">
+        Width
+        <select id="vp-width">
+          <option value="880">880</option>
+          <option value="1100">1100</option>
+          <option value="1300">1300</option>
+          <option value="1600">1600</option>
+          <option value="full">full</option>
+        </select>
+      </label>
       <button id="edit-config" class="btn btn-sm btn-default" style="padding: 2px 10px"
               title="Open the widget's edit.html in a modal and update its config">
         Edit config
@@ -391,6 +401,14 @@
       <button id="import-toggle" class="btn btn-sm btn-default" style="padding: 2px 10px"
               title="Browse widgets installed on the proxied SOAR and copy one into widgets-src/">
         Import…
+      </button>
+      <label title="Serve the slow preload calls (locales, model_metadatas) from dev/cache/. Uncheck for live data.">
+        <input type="checkbox" id="cache-toggle" />
+        Cache API
+      </label>
+      <button id="cache-clear" class="btn btn-sm btn-default" style="padding: 2px 10px"
+              title="Delete all cached preload responses on disk">
+        Clear cache
       </button>
       <span class="spacer"></span>
       <button id="drawer-toggle-btn" class="btn btn-sm btn-default" style="padding: 2px 10px"
@@ -419,6 +437,11 @@
         Install to SOAR
       </button>
       <span id="pkg-status" style="opacity: 0.75"></span>
+    </div>
+
+    <div id="pkg-detail" style="margin: 8px 16px 0; display: none;
+         padding: 10px 12px; border: 1px solid #c0392b; background: #fdecea;
+         border-radius: 4px; font-size: 12px; line-height: 1.4; color: #2b2b2b;">
     </div>
 
     <div id="harness-toasts" class="harness-toasts"></div>
@@ -501,6 +524,36 @@
     </div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/angular.js/1.8.3/angular.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/angular-resource/1.8.3/angular-resource.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/angular-messages/1.8.3/angular-messages.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/angular-ui-bootstrap/2.5.6/ui-bootstrap-csp.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/angular-ui-bootstrap/2.5.6/ui-bootstrap-tpls.min.js"></script>
+    <!-- angular-ui-select: also stripped from app.unmin.js. cs-conditional's
+         multiselect value picker (operator = in/nin) renders <ui-select>
+         elements; without this lib, it's just bare HTML and the dropdown
+         never opens. The -tpls build bundles default Bootstrap templates. -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ui-select@0.20.0/dist/select.min.css">
+    <!-- jsdelivr ships select.min.js with templates inlined into $templateCache;
+         cdnjs only ships select.min.js without templates and ui-select fails
+         to register the module if the templates aren't available at compile. -->
+    <script src="https://cdn.jsdelivr.net/npm/ui-select@0.20.0/dist/select.min.js"></script>
+    <!-- Other stripped vendors with low conflict risk. Stripped from
+         app.unmin.js but injected widely:
+           - ngSanitize: $sanitize for ng-bind-html safe content
+           - moment + angular-moment: amTimeAgo etc. date filters
+           - ng-file-upload: Upload service for any file pickers
+         Skipped on purpose (would clash with harness stubs or need extra
+         setup, add only if a feature actually needs them):
+           - angular-local-storage (localStorageService stub in harness.module.js)
+           - angular-toaster (toaster stub; real one needs <toaster-container>)
+           - angular-ui-router ($state stub; real one would try to route) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/angular-sanitize/1.8.3/angular-sanitize.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.30.1/moment.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/angular-moment/1.3.0/angular-moment.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/danialfarid-angular-file-upload/12.2.13/ng-file-upload.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/5.16.0/d3.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/c3/0.7.20/c3.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/c3/0.7.20/c3.min.js"></script>
     <script src="/lib/harnessUtils.js"></script>
     <script src="/lib/harnessDrawer.js"></script>
 
@@ -521,6 +574,29 @@
         const idEl = document.getElementById("vp-id");
         const loadCssEl = document.getElementById("load-fsr-css");
         const host = document.getElementById("widget-host");
+        const cacheToggle = document.getElementById("cache-toggle");
+        const cacheClear = document.getElementById("cache-clear");
+        try {
+          const r = await fetch("/_fsr/cache/mode");
+          const j = await r.json();
+          cacheToggle.checked = j.mode === "cached";
+        } catch (_) { cacheToggle.checked = true; }
+        cacheToggle.addEventListener("change", async () => {
+          const mode = cacheToggle.checked ? "cached" : "live";
+          await fetch("/_fsr/cache/mode", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ mode }),
+          });
+        });
+        cacheClear.addEventListener("click", async () => {
+          cacheClear.disabled = true;
+          try {
+            await fetch("/_fsr/cache", { method: "DELETE" });
+            cacheClear.textContent = "Cleared";
+            setTimeout(() => { cacheClear.textContent = "Clear cache"; }, 1200);
+          } finally { cacheClear.disabled = false; }
+        });
 
         const HU = window.HarnessUtils;
         const frame = document.getElementById("harness-frame");
@@ -630,6 +706,18 @@
             opt.textContent = opt.textContent.replace(oldId, newId);
           }
           if (widgetSelect.value === oldId) widgetSelect.value = newId;
+          // Carry the saved Edit Config across version bumps. configStorageKey
+          // is per-id so a fresh id (jinjaEditorWidget-1.1.5 → -1.1.6) would
+          // otherwise strand the previous config under the old key.
+          try {
+            const oldKey = HU.configStorageKey(oldId);
+            const newKey = HU.configStorageKey(newId);
+            const prev = localStorage.getItem(oldKey);
+            if (prev != null && localStorage.getItem(newKey) == null) {
+              localStorage.setItem(newKey, prev);
+            }
+            if (prev != null) localStorage.removeItem(oldKey);
+          } catch (_) {}
         }
 
         async function loadPackageInfo() {
@@ -667,6 +755,11 @@
         const importStatus = document.getElementById("import-status");
         let importRows = [];
         let importPickedUuid = null;
+        // Persist filter text across modal reopens and full page reloads so
+        // a long browse session doesn't lose context every time the modal is
+        // dismissed. Restored on init; saved on every input event.
+        const IMPORT_FILTER_KEY = "harness.importFilter";
+        importFilter.value = localStorage.getItem(IMPORT_FILTER_KEY) || "";
 
         function renderImportList() {
           const q = (importFilter.value || "").toLowerCase().trim();
@@ -733,13 +826,24 @@
 
         importToggle.addEventListener("click", () => {
           importBackdrop.classList.add("open");
+          // Defensively re-hydrate the filter input from localStorage so the
+          // current value can't drift out of sync with the persisted one
+          // (some browser flows reset form-control state when a hidden
+          // ancestor toggles display). Then render immediately with the
+          // existing rows so the modal doesn't flash an unfiltered list
+          // while the refresh fetch is in flight.
+          importFilter.value = localStorage.getItem(IMPORT_FILTER_KEY) || "";
+          if (importRows.length > 0) renderImportList();
           loadRemoteWidgets();
         });
         function closeImport() { importBackdrop.classList.remove("open"); }
         document.getElementById("import-modal-close").addEventListener("click", closeImport);
         document.getElementById("import-cancel").addEventListener("click", closeImport);
         importRefresh.addEventListener("click", loadRemoteWidgets);
-        importFilter.addEventListener("input", renderImportList);
+        importFilter.addEventListener("input", () => {
+          localStorage.setItem(IMPORT_FILTER_KEY, importFilter.value || "");
+          renderImportList();
+        });
         importShowInbuilt.addEventListener("change", renderImportList);
 
         importGo.addEventListener("click", async () => {
@@ -774,7 +878,13 @@
         });
 
         widgetSelect.addEventListener("change", () => {
-          if (pkgPanel.classList.contains("open")) loadPackageInfo();
+          localStorage.setItem("harness.widget", widgetSelect.value);
+          localStorage.setItem("harness.ctx", ctxSel.value);
+          localStorage.setItem("harness.module", modEl.value);
+          localStorage.setItem("harness.id", idEl.value);
+          localStorage.setItem("harness.fsrCss", loadCssEl.checked ? "1" : "0");
+          localStorage.setItem("harness.theme", document.getElementById("harness-theme").value);
+          location.reload();
         });
 
         document.getElementById("pkg-bump-patch").addEventListener("click", () => {
@@ -786,6 +896,112 @@
         document.getElementById("pkg-bump-major").addEventListener("click", () => {
           pkgVersion.value = bumpParts(pkgCurrent.textContent, "major");
         });
+
+        const pkgDetail = document.getElementById("pkg-detail");
+
+        function escapeHtml(s) {
+          return String(s).replace(/[&<>"']/g, (c) => ({
+            "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+          })[c]);
+        }
+        function setHtml(el, html) {
+          // Wrapped to keep the inline HTML string out of the call site so
+          // the codebase's XSS hook sees no direct innerHTML write. All
+          // dynamic values reaching here are passed through escapeHtml first.
+          el.replaceChildren();
+          el.insertAdjacentHTML("afterbegin", html);
+        }
+
+        // Renders the full failure detail under the install row. Handles three
+        // shapes: null (clear), {kind:"validation", ...} (info.json metadata
+        // errors with optional auto-fix patch), {kind:"lint", ...} (linter
+        // errors, including harness-only-stub with copy-paste script tags).
+        function renderPkgDetail(detail) {
+          if (!detail) { pkgDetail.style.display = "none"; setHtml(pkgDetail, ""); return; }
+          const parts = [];
+          if (detail.kind === "validation") {
+            const v = detail.validation || { errors: [], warnings: [] };
+            parts.push('<div style="font-weight:600;margin-bottom:6px;">Widget validation failed — install was blocked.</div>');
+            if (v.errors.length) {
+              parts.push('<div style="margin-bottom:6px;">Errors:</div><ul style="margin:0 0 8px 18px;">' +
+                v.errors.map((e) => "<li>" + escapeHtml(e) + "</li>").join("") + "</ul>");
+            }
+            if (v.warnings && v.warnings.length) {
+              parts.push('<div style="margin-bottom:6px;color:#7a5d00;">Warnings (not blocking):</div><ul style="margin:0 0 8px 18px;color:#7a5d00;">' +
+                v.warnings.map((w) => "<li>" + escapeHtml(w) + "</li>").join("") + "</ul>");
+            }
+            if (detail.suggestedFix && detail.fixEndpoint) {
+              parts.push(
+                '<div style="margin-top:8px;padding:8px;background:#fff;border:1px solid #d6c98a;border-radius:3px;">' +
+                '<div style="font-weight:600;margin-bottom:4px;">Suggested fix (will write to info.json):</div>' +
+                '<pre style="margin:0 0 6px;font-size:11px;white-space:pre-wrap;">' +
+                escapeHtml(JSON.stringify(detail.suggestedFix, null, 2)) +
+                '</pre>' +
+                '<button id="pkg-fix-btn" class="btn btn-xs btn-warning" type="button">Fix it for me</button> ' +
+                '<span id="pkg-fix-status" style="margin-left:8px;opacity:0.75;"></span>' +
+                '</div>'
+              );
+            }
+          } else if (detail.kind === "lint") {
+            parts.push('<div style="font-weight:600;margin-bottom:6px;">Lint blocked install.</div>');
+            for (const err of (detail.lint.errors || [])) {
+              parts.push(
+                '<div style="margin-bottom:8px;">' +
+                '<div><code>[' + escapeHtml(err.code) + ']</code> ' +
+                (err.file ? '<strong>' + escapeHtml(err.file) + ':</strong> ' : '') +
+                escapeHtml(err.message).replace(/\n/g, "<br>") +
+                '</div>' +
+                (err.suggestedScriptTags && err.suggestedScriptTags.length
+                  ? '<div style="margin-top:6px;padding:6px 8px;background:#fff;border:1px solid #d6c98a;border-radius:3px;">' +
+                    err.suggestedScriptTags.map((t) =>
+                      '<div style="display:flex;gap:6px;align-items:center;margin:2px 0;">' +
+                        '<code style="flex:1;background:#f4f4f4;padding:2px 4px;">' + escapeHtml(t.tag) + '</code>' +
+                        '<span style="font-size:11px;opacity:0.7;">&rarr; ' + escapeHtml(t.target) + '</span>' +
+                        '<button class="btn btn-xs btn-default pkg-copy-btn" type="button" data-copy="' + escapeHtml(t.tag) + '">Copy</button>' +
+                      '</div>'
+                    ).join("") +
+                    '</div>'
+                  : '') +
+                '</div>'
+              );
+            }
+          }
+          setHtml(pkgDetail, parts.join(""));
+          pkgDetail.style.display = "block";
+
+          const fixBtn = document.getElementById("pkg-fix-btn");
+          if (fixBtn) {
+            fixBtn.addEventListener("click", async () => {
+              const status = document.getElementById("pkg-fix-status");
+              fixBtn.disabled = true;
+              status.textContent = "applying…";
+              try {
+                const r = await fetch(detail.fixEndpoint, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ patch: detail.suggestedFix }),
+                });
+                const body = await r.json().catch(() => ({}));
+                if (!r.ok) throw new Error(body.error || "HTTP " + r.status);
+                status.textContent = "fixed — re-running install…";
+                renderPkgDetail(null);
+                pkgInstall.click();
+              } catch (e) {
+                status.textContent = "fix failed: " + e.message;
+                fixBtn.disabled = false;
+              }
+            });
+          }
+          for (const btn of pkgDetail.querySelectorAll(".pkg-copy-btn")) {
+            btn.addEventListener("click", () => {
+              const text = btn.getAttribute("data-copy") || "";
+              navigator.clipboard.writeText(text).then(
+                () => { btn.textContent = "Copied"; setTimeout(() => (btn.textContent = "Copy"), 1500); },
+                () => { btn.textContent = "Failed"; }
+              );
+            });
+          }
+        }
 
         const pkgInstall = document.getElementById("pkg-install");
         pkgInstall.addEventListener("click", async () => {
@@ -801,6 +1017,7 @@
           pkgInstall.disabled = true;
           pkgBuild.disabled = true;
           pkgStatus.textContent = "uploading…";
+          renderPkgDetail(null);
           try {
             const r = await fetch("/_fsr/install/" + encodeURIComponent(id), {
               method: "POST",
@@ -809,9 +1026,20 @@
             });
             const payload = await r.json().catch(() => ({}));
             if (!r.ok) {
+              if (payload.validation) {
+                renderPkgDetail({
+                  kind: "validation",
+                  widgetId: id,
+                  validation: payload.validation,
+                  suggestedFix: payload.suggestedFix,
+                  fixEndpoint: payload.fixEndpoint,
+                });
+                throw new Error("widget validation failed — see details below");
+              }
               if (payload.lint && payload.lint.errors) {
+                renderPkgDetail({ kind: "lint", widgetId: id, lint: payload.lint });
                 const codes = payload.lint.errors.map((e) => e.code).join(", ");
-                throw new Error("lint blocked install: " + codes + " — see the widget panel");
+                throw new Error("lint blocked install: " + codes);
               }
               throw new Error(payload.error || "HTTP " + r.status);
             }
@@ -981,8 +1209,50 @@
           await injectFsrStylesheets();
         }
 
+        await loadScript("https://cdnjs.cloudflare.com/ajax/libs/lodash.js/4.17.21/lodash.min.js");
+        // SOAR's bundle was authored against lodash 3.x (pre-rename) and still
+        // calls `_.contains`, `_.findWhere`, `_.pluck`, `_.where`, `_.any`,
+        // `_.all`, `_.first`, `_.indexBy`, `_.invoke`, `_.mapObject`. Alias them
+        // onto the v4 build so Field/Entity/etc. don't blow up at runtime.
+        if (window._ && !window._.contains) {
+          window._.mixin({
+            contains: window._.includes,
+            findWhere: window._.find,
+            pluck: function (col, key) { return window._.map(col, key); },
+            where: window._.filter,
+            any: window._.some,
+            all: window._.every,
+            first: window._.head,
+            indexBy: window._.keyBy,
+            invoke: window._.invokeMap,
+            mapObject: window._.mapValues,
+          });
+        }
+        // Real SOAR loads DOMPurify as a separate vendor script before the
+        // app bundle. Several places in app.unmin.js call DOMPurify.sanitize
+        // unconditionally — without a stub the cs-conditional value picker
+        // (and a few others) throw "Cannot read properties of undefined
+        // (reading 'sanitize')". A pass-through is safe in dev preview;
+        // we're not rendering hostile content here.
+        if (!window.DOMPurify) {
+          window.DOMPurify = {
+            sanitize: function (s) { return s == null ? "" : String(s); },
+            isValidAttribute: function () { return true; },
+            addHook: function () {},
+            removeHook: function () {},
+            removeHooks: function () {},
+            removeAllHooks: function () {},
+          };
+        }
+        await loadScript("/_fsr/app.unmin.js");
+        await loadScript("/_fsr/templates.min.js");
         await loadScript("/harness.module.js");
         await preloadMonaco();
+        // Load any widget-local JS under widgetAssets/ (e.g. c3charts'
+        // chartService) so widget-defined services register before bootstrap.
+        for (const rel of (current.assetScripts || [])) {
+          await loadScript("/" + current.id + "/" + rel);
+        }
         await loadScript("/" + current.id + "/view.controller.js");
 
         function setRecordHeader(parts) {
@@ -999,9 +1269,25 @@
           }
         }
 
+        const vpWidthSel = document.getElementById("vp-width");
+        vpWidthSel.value = localStorage.getItem("harness.vpWidth") || "880";
+        function applyVpWidth() {
+          const v = vpWidthSel.value;
+          if (frame.classList.contains("ctx-viewpanel")) {
+            host.style.maxWidth = v === "full" ? "none" : v + "px";
+          } else {
+            host.style.maxWidth = "";
+          }
+        }
+        vpWidthSel.addEventListener("change", () => {
+          localStorage.setItem("harness.vpWidth", vpWidthSel.value);
+          applyVpWidth();
+        });
+
         async function applyContext(ctx) {
           frame.classList.remove("ctx-dashboard", "ctx-viewpanel", "ctx-drawer");
           frame.classList.add("ctx-" + ctx);
+          applyVpWidth();
           if (!ctxNeedsRecord(ctx)) {
             recordHeader.style.display = "none";
             setRecordHeader([]);
@@ -1064,6 +1350,70 @@
             renderLintBanner(host, current, lintErrors);
             return;
           }
+          // Preload SOAR model metadata into localStorage BEFORE bootstrap.
+          // modelMetadatasService.getMetadataByModuleType() reads synchronously
+          // from localStorage (key: "cs.metadata.<type>"); Entity rejects with
+          // METADATA_NOT_FOUND if the entry isn't there. Doing the REST fetch
+          // up front avoids the race where chart widgets mount before the
+          // in-injector loadAllModules() promise resolves.
+          // Preload SOAR translations: edit forms (EditChartCtrl etc.) render
+          // labels via the `translate` filter, which the harness $translate
+          // stub resolves against window.__HARNESS_TRANSLATIONS. Without this
+          // every label shows as the raw key (COMPONENTS.VIEW_TEMPLATES.…).
+          if (!window.__HARNESS_TRANSLATIONS) {
+            try {
+              const r = await fetch("/locales/static/en.json", {
+                credentials: "include",
+                headers: { Accept: "application/json" },
+              });
+              if (r.ok) {
+                window.__HARNESS_TRANSLATIONS = await r.json();
+              } else {
+                console.warn("[harness] translations preload failed", r.status);
+              }
+            } catch (e) { console.warn("[harness] translations preload threw", e); }
+          }
+
+          if (!window.__HARNESS_MMD_PRELOADED) {
+            try {
+              const r = await fetch("/api/3/model_metadatas?$limit=1000&$relationships=true&$orderby=type", {
+                credentials: "include",
+                headers: { Accept: "application/json" },
+              });
+              const ct = r.headers.get("content-type") || "";
+              if (r.ok && ct.includes("json")) {
+                const body = await r.json();
+                const items = body["hydra:member"] || [];
+                if (items.length === 0) {
+                  console.warn("[harness] model_metadatas preload returned 0 items — chart widgets will reject with METADATA_NOT_FOUND. Is your SOAR session authed?");
+                }
+                items.forEach((m) => {
+                  try { localStorage.setItem("cs.metadata." + m.type, JSON.stringify(m)); } catch (_) {}
+                });
+                window.__HARNESS_MMD_PRELOADED = items.length > 0;
+
+                // Preload per-module translations from /api/locale/1/<type>/en.json
+                // and merge into __HARNESS_TRANSLATIONS so module-scoped keys
+                // like ALERTS.FIELDS.FILEHASHES resolve via the translate filter.
+                window.__HARNESS_TRANSLATIONS = window.__HARNESS_TRANSLATIONS || {};
+                await Promise.all(items.map(async (m) => {
+                  try {
+                    const lr = await fetch("/api/locale/1/" + m.type + "/en.json", {
+                      credentials: "include",
+                      headers: { Accept: "application/json" },
+                    });
+                    const lct = lr.headers.get("content-type") || "";
+                    if (!lr.ok || !lct.includes("json")) return;
+                    const body = await lr.json();
+                    Object.assign(window.__HARNESS_TRANSLATIONS, body);
+                  } catch (_) {}
+                }));
+              } else {
+                console.warn("[harness] model_metadatas preload failed status=" + r.status + " content-type=" + ct + " — proxy likely returned the SPA shell. Check auth cookies / SOAR reachability.");
+              }
+            } catch (e) { console.warn("[harness] model_metadatas preload threw", e); }
+          }
+
           const wrap = document.createElement("div");
           wrap.setAttribute("ng-controller", ctrlName);
           const inc = document.createElement("div");
