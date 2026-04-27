@@ -109,6 +109,10 @@ function rewriteForVersion(dir, widgetName, version) {
   rewrite(path.join(dir, "edit.controller.js"));
   rewrite(path.join(dir, "view.controller.js"));
   rewrite(path.join(dir, "view.html"), { rewritePaths: true });
+  // edit.html can also <script>-load widgetAssets files (e.g. c3charts'
+  // exampleCatalog). Path rewriting keeps those tags in lockstep with
+  // info.json on every bump, same as view.html.
+  rewrite(path.join(dir, "edit.html"), { rewritePaths: true });
 }
 
 // Convenience alias — same function is used by packageWidget (against a
@@ -164,6 +168,175 @@ function validateStructure(dir) {
   }
 }
 
+// Hard-required info.json metadata. windowClass and size are load-bearing for
+// $uibModal — without them the edit modal launches with no CSS class/size and
+// renders invisibly in real SOAR (the harness wraps the controller itself, so
+// dev preview hides the bug). standalone + pages are required by SOAR's widget
+// registry.
+function validateInfoMetadata(info) {
+  const errors = [];
+  const warnings = [];
+  if (!info || typeof info !== "object") {
+    errors.push("info.json: not an object");
+    return { errors, warnings };
+  }
+  if (!info.name) errors.push("info.json: missing 'name'");
+  if (!info.version) {
+    errors.push("info.json: missing 'version'");
+  } else if (!isValidVersion(info.version)) {
+    errors.push(`info.json: invalid version '${info.version}'`);
+  }
+
+  const meta = info.metadata;
+  if (!meta || typeof meta !== "object") {
+    errors.push("info.json: missing 'metadata' block");
+    return { errors, warnings };
+  }
+  // These are common on widgets that launch large config modals (action
+  // renderer, jinja editor) but Fortinet's stock widgets ship without them
+  // and still work. Surface as warnings so the user knows to consider them
+  // for big modals, but don't block install.
+  for (const k of ["windowClass", "size"]) {
+    if (typeof meta[k] !== "string" || !meta[k].trim()) {
+      warnings.push(
+        `info.json: metadata.${k} not set — fine for most widgets; set "Full Width" + "lg" if your edit modal looks cramped or invisible`
+      );
+    }
+  }
+  if (typeof meta.standalone !== "boolean") {
+    warnings.push("info.json: metadata.standalone not set (boolean) — defaults vary by SOAR version");
+  }
+  if (!Array.isArray(meta.pages) || meta.pages.length === 0) {
+    errors.push("info.json: metadata.pages must be a non-empty array — SOAR uses this to decide where the widget can be placed");
+  }
+
+  if (!Array.isArray(meta.compatibility) || meta.compatibility.length === 0) {
+    warnings.push("info.json: metadata.compatibility empty — widget may not surface on any SOAR version");
+  }
+  if (!meta.category) warnings.push("info.json: metadata.category missing");
+  if (meta.publisher == null || meta.publisher === "") {
+    warnings.push("info.json: metadata.publisher missing");
+  }
+  return { errors, warnings };
+}
+
+// Validates that .controller(...) registrations match the name+version derived
+// from info.json. Catches the "version drift" case where someone bumps
+// info.json but forgets to re-run the rewrite, leaving SOAR unable to find
+// the controller it expects (`<name><digits>(Dev)?Ctrl`).
+function validateControllers(dir, info) {
+  const errors = [];
+  const warnings = [];
+  if (!info || !info.name || !info.version || !isValidVersion(info.version)) {
+    return { errors, warnings };
+  }
+  const expectedDigits = versionToNumeric(info.version);
+  const variants = uniq([info.name, capitalize(info.name), decapitalize(info.name)]);
+  const variantAlt = variants.map(escapeRegex).join("|");
+  const editPat = new RegExp(`^edit(?:${variantAlt})(\\d+)(Dev)?Ctrl$`);
+  const viewPat = new RegExp(`^(?:${variantAlt})(\\d+)(Dev)?Ctrl$`);
+
+  function controllersIn(file) {
+    const p = path.join(dir, file);
+    if (!fs.existsSync(p)) return null;
+    const content = fs.readFileSync(p, "utf8");
+    const out = [];
+    const re = /\.controller\(\s*['"]([^'"]+)['"]/g;
+    let m;
+    while ((m = re.exec(content)) !== null) out.push(m[1]);
+    return out;
+  }
+
+  function check(file, pat, expectedShape) {
+    const names = controllersIn(file);
+    if (names === null) return;
+    if (names.length === 0) {
+      errors.push(`${file}: no .controller(...) registration found`);
+      return;
+    }
+    const matched = [];
+    const stray = [];
+    for (const n of names) {
+      const m = n.match(pat);
+      if (m) matched.push({ name: n, digits: m[1] });
+      else stray.push(n);
+    }
+    if (matched.length === 0) {
+      errors.push(
+        `${file}: no controller matches expected shape '${expectedShape}' (found: ${names.join(", ")})`
+      );
+      return;
+    }
+    for (const { name, digits } of matched) {
+      if (digits !== expectedDigits) {
+        errors.push(
+          `${file}: controller '${name}' has version digits '${digits}' but info.json version '${info.version}' -> '${expectedDigits}' (re-package to sync, or bump via /_fsr/package)`
+        );
+      }
+    }
+    for (const n of stray) {
+      warnings.push(`${file}: stray controller registration '${n}' won't be auto-rewritten`);
+    }
+  }
+
+  check("edit.controller.js", editPat, `edit${capitalize(info.name)}${expectedDigits}(Dev)?Ctrl`);
+  check("view.controller.js", viewPat, `${capitalize(info.name)}${expectedDigits}(Dev)?Ctrl`);
+  return { errors, warnings };
+}
+
+// Suggests a minimal JSON merge patch (RFC 7396 shape) that, when deep-merged
+// into the widget's info.json, would clear every error from validateInfoMetadata.
+// Conservative defaults — caller is expected to surface them in the harness UI
+// so the user knows what's about to be written. Returns null when no fixable
+// errors are present (warnings are intentionally left alone — they're judgment
+// calls, not silent rewrites).
+function suggestInfoFix(info) {
+  const safe = info && typeof info === "object" ? info : {};
+  const meta = safe.metadata && typeof safe.metadata === "object" ? safe.metadata : {};
+  const patch = {};
+  const metaPatch = {};
+  if (!Array.isArray(meta.pages) || meta.pages.length === 0) {
+    metaPatch.pages = ["Dashboard", "View Panel"];
+  }
+  if (Object.keys(metaPatch).length === 0) return null;
+  patch.metadata = metaPatch;
+  return patch;
+}
+
+// Deep-merges a JSON merge patch into the existing info.json on disk and
+// rewrites the file. Preserves the trailing newline if present. Returns the
+// updated info object.
+function applyInfoFix(infoPath, patch) {
+  const raw = fs.readFileSync(infoPath, "utf8");
+  const info = JSON.parse(raw);
+  function merge(dst, src) {
+    for (const k of Object.keys(src)) {
+      const v = src[k];
+      if (v && typeof v === "object" && !Array.isArray(v) && dst[k] && typeof dst[k] === "object" && !Array.isArray(dst[k])) {
+        merge(dst[k], v);
+      } else {
+        dst[k] = v;
+      }
+    }
+  }
+  merge(info, patch);
+  const trailingNewline = /\n$/.test(raw) ? "\n" : "";
+  fs.writeFileSync(infoPath, JSON.stringify(info, null, 2) + trailingNewline);
+  return info;
+}
+
+// Combines info-shape + controller-shape validation. Used by packageWidget
+// (defense-in-depth against the tmp tree) and by the route handlers as a
+// preflight against the source tree (after any version-bump sync).
+function validateWidget(dir, info) {
+  const a = validateInfoMetadata(info);
+  const b = validateControllers(dir, info);
+  return {
+    errors: [...a.errors, ...b.errors],
+    warnings: [...a.warnings, ...b.warnings],
+  };
+}
+
 function runTar(cwd, archivePath, relFiles) {
   return new Promise((resolve, reject) => {
     const args = [
@@ -217,6 +390,15 @@ async function packageWidget(widgetDir, outputDir) {
     rewriteForVersion(tmpDir, widgetName, version);
     validateStructure(tmpDir);
 
+    const report = validateWidget(tmpDir, info);
+    if (report.errors.length > 0) {
+      const err = new Error(
+        `widget validation failed:\n  - ${report.errors.join("\n  - ")}`
+      );
+      err.validation = report;
+      throw err;
+    }
+
     const absOutputDir = path.resolve(outputDir);
     fs.mkdirSync(absOutputDir, { recursive: true });
     const archivePath = path.join(absOutputDir, archiveName);
@@ -228,7 +410,15 @@ async function packageWidget(widgetDir, outputDir) {
     await runTar(tmpParent, archivePath, relFiles);
 
     const size = fs.statSync(archivePath).size;
-    return { archivePath, archiveName, widgetName, version, size, fileCount: absFiles.length };
+    return {
+      archivePath,
+      archiveName,
+      widgetName,
+      version,
+      size,
+      fileCount: absFiles.length,
+      warnings: report.warnings,
+    };
   } finally {
     fs.rmSync(tmpParent, { recursive: true, force: true });
   }
@@ -242,4 +432,9 @@ module.exports = {
   writeInfoVersion,
   rewriteForVersion,
   syncSourceToInfoJson,
+  validateInfoMetadata,
+  validateControllers,
+  validateWidget,
+  suggestInfoFix,
+  applyInfoFix,
 };
