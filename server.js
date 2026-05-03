@@ -741,6 +741,14 @@ function isLocalPath(p) {
   return false;
 }
 
+// Lightweight surface for the in-page status strip — a one-shot read of
+// "what is this harness pointed at" without needing to scrape the proxy.
+app.get("/_fsr/info", (_req, res) => {
+  let host = "";
+  try { host = new URL(HOST || "").host; } catch (_) { host = HOST || "(unset)"; }
+  res.json({ proxyHost: host, widgetCount: WIDGETS.length });
+});
+
 app.get("/_fsr/widgets", (_req, res) => {
   res.json({
     widgets: WIDGETS.map((w) => ({

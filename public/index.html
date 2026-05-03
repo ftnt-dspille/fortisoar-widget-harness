@@ -383,6 +383,37 @@
       }
       body.theme-light .harness-drawer-filter { background: #fff; color: #1b1f24; border-color: #c0c5cc; }
       body.has-drawer-open { padding-bottom: 50vh; }
+      /* Status strip: thin row directly below the bar. Always visible,
+         data-driven from /_fsr/info + harness network buffer. */
+      .harness-status {
+        background: #14171c;
+        color: #c0c5cc;
+        font-size: 11px;
+        padding: 4px 16px;
+        display: flex;
+        gap: 16px;
+        align-items: center;
+        border-bottom: 1px solid #2b313a;
+      }
+      body.theme-light .harness-status {
+        background: #e8eaed; color: #3a4049; border-bottom-color: #d0d4da;
+      }
+      .harness-status .status-pill {
+        display: inline-flex; gap: 4px; align-items: center;
+      }
+      .harness-status .dot {
+        width: 6px; height: 6px; border-radius: 50%;
+        background: #888; display: inline-block;
+      }
+      .harness-status .dot.ok  { background: #5cb85c; }
+      .harness-status .dot.warn { background: #f0ad4e; }
+      .harness-status .dot.err { background: #d9534f; }
+      .harness-status .meta { opacity: 0.7; }
+      .harness-status code {
+        background: rgba(255,255,255,0.06);
+        padding: 0 4px; border-radius: 2px;
+      }
+      body.theme-light .harness-status code { background: rgba(0,0,0,0.06); }
     </style>
   </head>
   <body>
@@ -464,6 +495,25 @@
           Debug <span id="drawer-error-count" class="harness-drawer-badge" style="display:none">0</span>
         </button>
       </div>
+    </div>
+
+    <div id="harness-status" class="harness-status">
+      <span class="status-pill" title="The FortiSOAR host this harness is proxying to">
+        <span class="meta">proxy →</span>
+        <code id="status-host">…</code>
+      </span>
+      <span class="status-pill" title="Currently mounted widget and its version">
+        <span class="meta">widget</span>
+        <code id="status-widget">—</code>
+      </span>
+      <span class="status-pill" title="Last proxied request (status code, method, path)">
+        <span id="status-req-dot" class="dot"></span>
+        <span id="status-req">no requests yet</span>
+      </span>
+      <span class="status-pill" title="Total proxied requests since page load">
+        <span class="meta">reqs</span>
+        <code id="status-req-count">0</code>
+      </span>
     </div>
 
     <div id="package-panel" class="harness-package-panel">
@@ -812,6 +862,49 @@
             settingsPopover.classList.remove("open");
           });
         }
+
+        // Status strip: proxy host (one-shot), current widget (on selection
+        // change), and last request / total counter (polled from the harness
+        // network buffer the drawer already maintains). No SSE plumbing —
+        // 1s polling is cheap and the buffer is always in memory.
+        (function initStatusStrip() {
+          const hostEl = document.getElementById("status-host");
+          const widgetEl = document.getElementById("status-widget");
+          const reqEl = document.getElementById("status-req");
+          const reqDot = document.getElementById("status-req-dot");
+          const reqCountEl = document.getElementById("status-req-count");
+          if (!hostEl) return;
+
+          fetch("/_fsr/info").then((r) => r.json()).then((j) => {
+            hostEl.textContent = j.proxyHost || "(unset)";
+          }).catch(() => { hostEl.textContent = "(offline)"; });
+
+          function refreshWidgetLabel() {
+            const sel = document.getElementById("widget-select");
+            const opt = sel && sel.options[sel.selectedIndex];
+            widgetEl.textContent = opt ? opt.textContent : "—";
+          }
+          refreshWidgetLabel();
+          const wsel = document.getElementById("widget-select");
+          if (wsel) wsel.addEventListener("change", refreshWidgetLabel);
+
+          // Poll the drawer's network buffer. dot color reflects the latest
+          // status: 2xx=ok, 3xx=warn, 4xx/5xx=err.
+          setInterval(() => {
+            if (!window.__harness) return;
+            const net = window.__harness.network();
+            reqCountEl.textContent = String(net.length);
+            const last = net[net.length - 1];
+            if (!last) return;
+            const s = Number(last.status) || 0;
+            reqDot.classList.remove("ok", "warn", "err");
+            if (s >= 200 && s < 300) reqDot.classList.add("ok");
+            else if (s >= 300 && s < 400) reqDot.classList.add("warn");
+            else reqDot.classList.add("err");
+            const path = (last.url || "").replace(/^https?:\/\/[^/]+/, "");
+            reqEl.textContent = `${s || "ERR"} ${last.method || ""} ${path}`;
+          }, 1000);
+        })();
 
         // Import modal: list widgets installed on the proxied SOAR and copy a
         // selected one into widgets-src/<folder>/widget. After import the new
