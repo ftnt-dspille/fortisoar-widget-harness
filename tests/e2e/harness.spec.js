@@ -3,7 +3,7 @@
 // The harness server is started automatically by Playwright (see playwright.config.js).
 // API calls to /api/** and Monaco assets are intercepted so no real SOAR is needed.
 
-const { test, expect } = require("@playwright/test");
+const { test, expect } = require("./_fixtures");
 
 // ---------------------------------------------------------------------------
 // Minimal Monaco stub injected before any page scripts run.
@@ -508,7 +508,12 @@ test.describe("filter palette insertion", () => {
     await page.getByRole("button", { name: /filter/i }).click();
     await page.locator("#jinja-widget-filter-search").waitFor({ timeout: 5000 });
 
-    await page.locator(".jinja-filter-item", { hasText: "upper" }).first().click();
+    // ng-repeat re-renders during palette open; wait for the count to settle
+    // before clicking so the element doesn't detach mid-action.
+    const item = page.locator(".jinja-filter-item", { hasText: "upper" }).first();
+    await item.waitFor({ state: "visible", timeout: 5000 });
+    await page.waitForTimeout(100);
+    await item.click();
 
     // insertFilter calls templateEditor.executeEdits() which in the stub appends
     // the snippet text to _val. Check the jinja editor's _val directly — this
@@ -545,8 +550,17 @@ test.describe("output pane", () => {
     await setTemplate(page);
     await page.locator(".render-btn").click();
 
+    // Wait for the controller's output-kind detection to actually flip to
+    // 'html' before asserting on the iframe — under serial runs the eval
+    // request takes longer to settle and a fixed wait races the digest.
+    await page.waitForFunction(() => {
+      const el = document.querySelector("[data-ng-controller*='jinjaEditorWidget']") ||
+                 document.querySelector("[ng-controller*='jinjaEditorWidget']");
+      const s = el && angular.element(el).scope();
+      return s && s.resolveOutputTab && s.resolveOutputTab() === "html";
+    }, null, { timeout: 20000 });
     const frame = page.locator(".jinja-html-preview-frame");
-    await expect(frame).toBeVisible({ timeout: 10000 });
+    await expect(frame).toBeVisible({ timeout: 5000 });
     // Empty sandbox attribute = no scripts, no same-origin, no form, no popups.
     await expect(frame).toHaveAttribute("sandbox", "");
     // contentDocument is unreadable from the parent (sandbox isolation), so
@@ -600,7 +614,11 @@ test.describe("context contexts", () => {
     // Re-route AFTER setupPage so this handler wins (Playwright route registration is LIFO).
     let lastUrl = null;
     await page.route(/\/api\/3\/(?!solutionpacks)/, (route) => {
-      lastUrl = route.request().url();
+      const url = route.request().url();
+      // Only capture the per-record fetch — other /api/3/* requests
+      // (model_metadatas, picklists) fire concurrently and would otherwise
+      // overwrite this assertion target.
+      if (/\/api\/3\/alerts\//.test(url)) lastUrl = url;
       return route.fulfill({
         status: 200,
         contentType: "application/json",
@@ -677,6 +695,9 @@ test.describe("edit modal", () => {
     await waitForWidgetReady(page);
     await page.locator("#edit-config").click();
     await expect(page.locator("#edit-modal-backdrop.open")).toBeVisible({ timeout: 5000 });
+    // Inner edit.html template loads async after the backdrop appears; wait
+    // for the controller wrap to mount before reaching into its scope.
+    await page.locator("#edit-modal-body > [ng-controller]").waitFor({ state: "attached", timeout: 5000 });
 
     // Force a known shape onto the edit scope so the save path has something
     // to snapshot — independent of whatever the real edit controller does.

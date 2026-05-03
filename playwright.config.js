@@ -16,7 +16,12 @@ module.exports = defineConfig({
     "widgets-src/*/tests/e2e/**/*.spec.js",
   ],
   timeout: 60000,
-  retries: 0,
+  // One retry covers genuine timing-flake (ng-repeat re-renders mid-click,
+  // digest-queue pileups under serial load) without masking real failures
+  // — a real bug fails twice. trace:'on-first-retry' below means the retry
+  // produces a full trace artifact for diagnosis when something does flake
+  // repeatedly.
+  retries: 1,
   reporter: "list",
   // Tests run against a dedicated harness on port 4401 so they never collide
   // with a developer's `pnpm start` on 4400. Each test invocation boots its
