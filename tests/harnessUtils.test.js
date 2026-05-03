@@ -151,31 +151,34 @@ describe("resolveMapping", () => {
 });
 
 describe("stateForContext", () => {
-  test("dashboard yields main.dashboard with empty params", () => {
+  // Implementation always seeds `params.page` with the context name so
+  // widgets that read `$state.params.page` (the `page === 'dashboard'`
+  // branches in c3charts and elsewhere) work uniformly across contexts.
+  test("dashboard yields main.dashboard with page=dashboard", () => {
     expect(stateForContext("dashboard")).toEqual({
       current: { name: "main.dashboard" },
-      params: {},
+      params: { page: "dashboard" },
     });
   });
 
-  test("viewpanel passes params through", () => {
+  test("viewpanel passes params through with page=viewPanel", () => {
     expect(stateForContext("viewpanel", { module: "alerts", id: "x" })).toEqual({
       current: { name: "viewPanel.modulesDetail" },
-      params: { module: "alerts", id: "x" },
+      params: { page: "viewPanel", module: "alerts", id: "x" },
     });
   });
 
-  test("drawer adds drawer flag to params", () => {
+  test("drawer adds drawer flag to params with page=viewPanel", () => {
     expect(stateForContext("drawer", { id: "x" })).toEqual({
       current: { name: "viewPanel.modulesDetail" },
-      params: { drawer: true, id: "x" },
+      params: { page: "viewPanel", drawer: true, id: "x" },
     });
   });
 
   test("unknown context falls back to dashboard", () => {
     expect(stateForContext("garbage")).toEqual({
       current: { name: "main.dashboard" },
-      params: {},
+      params: { page: "dashboard" },
     });
   });
 });

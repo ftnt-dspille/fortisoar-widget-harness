@@ -548,6 +548,17 @@ function recordProxy(entry) {
   broadcast({ type: "proxy", entry });
 }
 
+// Force every harness response to be uncacheable. Setting cacheControl:false
+// on express.static only suppresses *its* Cache-Control header — browsers
+// still apply heuristic caching, so an edited controller can keep running
+// the previous build until "Clear site data". no-store kills heuristics too.
+app.use((_req, res, next) => {
+  res.set("Cache-Control", "no-store, no-cache, must-revalidate");
+  res.set("Pragma", "no-cache");
+  res.set("Expires", "0");
+  next();
+});
+
 function mountWidget(w) {
   app.use(`/${w.id}`, express.static(w.dir, { etag: false, cacheControl: false }));
   console.log(`mount  /${w.id}  ->  ${w.dir}`);
