@@ -64,16 +64,85 @@
     return function (exception, cause) {
       try {
         if (window.__harnessReportError) {
+          // For "Possibly unhandled rejection" the `exception` is the
+          // raw rejection reason (often `undefined` from old AngularJS
+          // code that swallowed the error). Look up the creation-site
+          // stack we stashed when the promise was made; otherwise fall
+          // back to whatever stack the exception itself carries.
+          var creationStack = null;
+          try {
+            if (window.__harnessQ && exception !== undefined && exception !== null) {
+              creationStack = window.__harnessQ.lookup(exception);
+            }
+          } catch (_) {}
           window.__harnessReportError({
             source: "angular",
             message: (exception && exception.message) || String(exception),
             stack: (exception && exception.stack) || null,
+            creationStack: creationStack,
             cause: cause || null,
           });
         }
       } catch (_) {}
       $log.error.apply($log, arguments);
     };
+  }]);
+
+  // $q rejection-site tracing. AngularJS 1.x has no long stack traces, and
+  // its "Possibly unhandled rejection: undefined" log is useless on its own
+  // — you can't tell which deferred created the leaked promise. We decorate
+  // $q.defer / $q.reject so every promise gets a creation-time stack stashed
+  // in a WeakMap; $exceptionHandler above looks that up when an unhandled
+  // rejection fires. Async-stack-trace flags don't help here because $q
+  // isn't a native Promise.
+  app.config(["$provide", function ($provide) {
+    $provide.decorator("$q", ["$delegate", function ($delegate) {
+      var stacks = (typeof WeakMap === "function") ? new WeakMap() : null;
+      function captureStack(skipFn) {
+        var e = {};
+        if (Error.captureStackTrace) Error.captureStackTrace(e, skipFn);
+        else { try { throw new Error(); } catch (x) { e.stack = x.stack; } }
+        return e.stack;
+      }
+      function tag(promise, stack) {
+        if (!promise || !stack) return promise;
+        try {
+          if (stacks && typeof promise === "object") stacks.set(promise, stack);
+          else if (typeof promise === "object") promise.__creationStack = stack;
+        } catch (_) {}
+        return promise;
+      }
+
+      var origDefer = $delegate.defer;
+      $delegate.defer = function harnessDefer() {
+        var d = origDefer.apply(this, arguments);
+        var stack = captureStack(harnessDefer);
+        tag(d.promise, stack);
+        return d;
+      };
+
+      var origReject = $delegate.reject;
+      $delegate.reject = function harnessReject(reason) {
+        var p = origReject.apply(this, arguments);
+        var stack = captureStack(harnessReject);
+        tag(p, stack);
+        // Also key by the rejection reason so $exceptionHandler can find it
+        // when AngularJS later reports the unhandled rejection.
+        try {
+          if (stacks && reason && typeof reason === "object") stacks.set(reason, stack);
+        } catch (_) {}
+        return p;
+      };
+
+      window.__harnessQ = {
+        lookup: function (key) {
+          if (!stacks) return (key && key.__creationStack) || null;
+          try { return stacks.get(key) || null; } catch (_) { return null; }
+        },
+      };
+
+      return $delegate;
+    }]);
   }]);
 
   // `config` is normally provided by the widget template service on the host
@@ -119,7 +188,14 @@
       '    class="form-control"',
       '    data-ng-attr-id="{{formName + \'-\' + field.name}}"',
       '    data-ng-attr-name="{{field.name}}"',
-      '    data-ng-model="$parent.value"',
+      // Bind to the csField isolate scope's `value` directly. SOAR's real
+      // template uses `$parent.value`, which works there because of how
+      // SOAR's csField host element is wrapped — inside cs-conditional in
+      // the harness, `$parent.value` resolves up to cs-conditional's own
+      // ngModel (the whole customFilters object), so the input renders
+      // "[object Object]". `value` (the local isolate-scope binding) is
+      // always the per-row value regardless of nesting.
+      '    data-ng-model="value"',
       '    data-ng-required="field.required"',
       '    data-ng-readonly="disabled"',
       '    data-ng-attr-placeholder="{{placeholder}}"',
