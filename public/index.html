@@ -197,6 +197,19 @@
         color: #1b1f24;
         border-color: #c0c5cc;
       }
+      /* Navy: distinct chrome variant so the dropdown is visibly different
+         from dark. Background pulls toward FortiSOAR's navy palette, but the
+         harness chrome owns these colors — picking navy here always changes
+         chrome, regardless of whether 'Load FortiSOAR CSS' is on. */
+      body.theme-navy { background: #0f1a2e; color: #d8e1ee; }
+      body.theme-navy .harness-bar { background: #0d1525; color: #d8e1ee; }
+      body.theme-navy .harness-status { background: #0a1120; color: #95a3bb; border-bottom-color: #1c2a45; }
+      body.theme-navy .harness-bar input,
+      body.theme-navy .harness-bar select {
+        background: #1c2a45; color: #d8e1ee; border-color: #2a3a5c;
+      }
+      body.theme-navy .harness-frame { background: #0d1525; border-color: #1c2a45; }
+      body.theme-navy .harness-bar .zone + .zone { border-left-color: rgba(255,255,255,0.10); }
       body.theme-light .harness-empty {
         color: #555;
       }
@@ -458,7 +471,7 @@
             Settings ▾
           </button>
           <div id="settings-popover" class="harness-settings-popover">
-            <label>
+            <label title="Sets both the harness chrome and the SOAR widget theme ($rootScope.theme.id). All three values produce a visibly different chrome.">
               Theme
               <select id="harness-theme">
                 <option value="dark" selected>dark</option>
@@ -476,7 +489,7 @@
                 <option value="full">full</option>
               </select>
             </label>
-            <label>
+            <label title="Inject the proxied SOAR's stylesheets so the widget renders with SOAR's design tokens. Affects the widget area only — the harness chrome ignores it. Off = chrome-only styling, fastest load.">
               <input type="checkbox" id="load-fsr-css" />
               Load FortiSOAR CSS
             </label>
@@ -888,7 +901,9 @@
           const wsel = document.getElementById("widget-select");
           if (wsel) wsel.addEventListener("change", refreshWidgetLabel);
 
-          // Poll the drawer's network buffer. dot color reflects the latest
+          // Poll the drawer's network buffer. 2s — fast enough for human
+          // perception ("did that request succeed?") without adding visible
+          // timing pressure to the e2e suite. dot color reflects latest
           // status: 2xx=ok, 3xx=warn, 4xx/5xx=err.
           setInterval(() => {
             if (!window.__harness) return;
@@ -903,7 +918,7 @@
             else reqDot.classList.add("err");
             const path = (last.url || "").replace(/^https?:\/\/[^/]+/, "");
             reqEl.textContent = `${s || "ERR"} ${last.method || ""} ${path}`;
-          }, 1000);
+          }, 2000);
         })();
 
         // Import modal: list widgets installed on the proxied SOAR and copy a
@@ -1590,8 +1605,13 @@
 
           const $rootScope = currentInjector.get("$rootScope");
           window.__harnessApplyTheme = function (id) {
-            document.body.classList.toggle("theme-dark", id !== "light");
-            document.body.classList.toggle("theme-light", id === "light");
+            // Three explicit chrome variants. Previously "navy" silently
+            // fell through to dark — picking it had no chrome effect, only
+            // changing the SOAR widget theme via $rootScope.theme. Make the
+            // chrome reflect the picker for all three so the dropdown is
+            // never a no-op.
+            document.body.classList.remove("theme-dark", "theme-light", "theme-navy");
+            document.body.classList.add("theme-" + (id === "light" ? "light" : id === "navy" ? "navy" : "dark"));
             if ($rootScope.$$phase) {
               $rootScope.theme = { id: id };
             } else {

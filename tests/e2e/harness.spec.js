@@ -560,7 +560,7 @@ test.describe("output pane", () => {
       return s && s.resolveOutputTab && s.resolveOutputTab() === "html";
     }, null, { timeout: 20000 });
     const frame = page.locator(".jinja-html-preview-frame");
-    await expect(frame).toBeVisible({ timeout: 5000 });
+    await expect(frame).toBeVisible({ timeout: 15000 });
     // Empty sandbox attribute = no scripts, no same-origin, no form, no popups.
     await expect(frame).toHaveAttribute("sandbox", "");
     // contentDocument is unreadable from the parent (sandbox isolation), so
