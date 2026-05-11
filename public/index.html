@@ -150,7 +150,11 @@
         flex-wrap: wrap;
       }
       .harness-package-panel.open { display: flex; }
-      .harness-package-panel input {
+      /* Targets the text inputs (new-version field) only. Without the
+       * attribute filter this also stretches every radio in the panel to
+       * 100px, leaving a huge gap between the radio dot and its label. */
+      .harness-package-panel input[type="text"],
+      .harness-package-panel input:not([type]) {
         background: #2b313a;
         color: #eee;
         border: 1px solid #3a4049;
@@ -540,6 +544,14 @@
         <button id="pkg-bump-minor" class="btn btn-xs btn-default" type="button">minor</button>
         <button id="pkg-bump-major" class="btn btn-xs btn-default" type="button">major</button>
       </div>
+      <div class="group" style="align-items:center;gap:6px;">
+        <span style="opacity:0.7;font-size:11px;white-space:nowrap;">min compat</span>
+        <label style="margin:0;cursor:pointer;display:inline-flex;align-items:center;gap:3px;font-size:12px;"><input type="radio" name="pkg-compat" id="pkg-compat-none" value="" style="margin:0;" /> none</label>
+        <label style="margin:0;cursor:pointer;display:inline-flex;align-items:center;gap:3px;font-size:12px;"><input type="radio" name="pkg-compat" id="pkg-compat-74" value="7.4.0" style="margin:0;" /> 7.4</label>
+        <label style="margin:0;cursor:pointer;display:inline-flex;align-items:center;gap:3px;font-size:12px;"><input type="radio" name="pkg-compat" id="pkg-compat-76" value="7.6.0" style="margin:0;" /> 7.6</label>
+        <label style="margin:0;cursor:pointer;display:inline-flex;align-items:center;gap:3px;font-size:12px;"><input type="radio" name="pkg-compat" id="pkg-compat-80" value="8.0.0" style="margin:0;" /> 8.0</label>
+        <span id="pkg-compat-status" style="opacity:0.65;font-size:11px;"></span>
+      </div>
       <button id="pkg-build" class="btn btn-sm btn-success" type="button" style="padding: 2px 10px">
         Package &amp; Download
       </button>
@@ -805,6 +817,8 @@
         const pkgVersion = document.getElementById("pkg-version");
         const pkgBuild = document.getElementById("pkg-build");
         const pkgStatus = document.getElementById("pkg-status");
+        const pkgCompatRadios = Array.from(document.querySelectorAll("input[name='pkg-compat']"));
+        const pkgCompatStatus = document.getElementById("pkg-compat-status");
 
         function bumpParts(v, part) {
           const parts = String(v || "0.0.0").split(".").map((n) => parseInt(n, 10) || 0);
@@ -850,10 +864,39 @@
             const info = await r.json();
             pkgCurrent.textContent = info.version;
             pkgVersion.value = info.version;
+            const compat = info.compatibility || [];
+            const minVer = compat.length === 1 ? compat[0] : "";
+            const match = pkgCompatRadios.find((r) => r.value === minVer);
+            if (match) match.checked = true;
+            else document.getElementById("pkg-compat-none").checked = true;
           } catch (e) {
             pkgCurrent.textContent = "?";
             pkgStatus.textContent = "info failed: " + e.message;
           }
+        }
+
+        async function saveCompat() {
+          const selected = pkgCompatRadios.find((r) => r.checked);
+          const versions = selected && selected.value ? [selected.value] : [];
+          const id = widgetSelect.value;
+          pkgCompatStatus.textContent = "saving…";
+          try {
+            const r = await fetch("/_fsr/fix-info/" + encodeURIComponent(id), {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ patch: { metadata: { compatibility: versions } } }),
+            });
+            const body = await r.json().catch(() => ({}));
+            if (!r.ok) throw new Error(body.error || "HTTP " + r.status);
+            pkgCompatStatus.textContent = "saved";
+            setTimeout(() => { pkgCompatStatus.textContent = ""; }, 1500);
+          } catch (e) {
+            pkgCompatStatus.textContent = "error: " + e.message;
+          }
+        }
+
+        for (const r of pkgCompatRadios) {
+          r.addEventListener("change", saveCompat);
         }
 
         pkgToggle.addEventListener("click", async () => {
@@ -1123,6 +1166,9 @@
                 '</div>'
               );
             }
+          } else if (detail.kind === "upstream") {
+            parts.push('<div style="font-weight:600;margin-bottom:6px;">SOAR rejected the upload (' + escapeHtml(detail.status || "error") + ').</div>');
+            parts.push('<pre style="margin:0;font-size:11px;white-space:pre-wrap;padding:8px;border:1px solid #c0392b;border-radius:3px;">' + escapeHtml(detail.body || "(empty response body — check server console for headers)") + '</pre>');
           } else if (detail.kind === "lint") {
             parts.push('<div style="font-weight:600;margin-bottom:6px;">Lint blocked install.</div>');
             for (const err of (detail.lint.errors || [])) {
@@ -1221,6 +1267,9 @@
                 renderPkgDetail({ kind: "lint", widgetId: id, lint: payload.lint });
                 const codes = payload.lint.errors.map((e) => e.code).join(", ");
                 throw new Error("lint blocked install: " + codes);
+              }
+              if (payload.body) {
+                renderPkgDetail({ kind: "upstream", body: payload.body, status: payload.error });
               }
               throw new Error(payload.error || "HTTP " + r.status);
             }

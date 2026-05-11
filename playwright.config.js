@@ -23,13 +23,13 @@ module.exports = defineConfig({
   // repeatedly.
   retries: 1,
   reporter: "list",
-  // Tests run against a dedicated harness on port 4401 so they never collide
-  // with a developer's `pnpm start` on 4400. Each test invocation boots its
-  // own server; reuseExistingServer:true skips the boot only if 4401 is
+  // Tests run against a dedicated harness on port 14401 so they never collide
+  // with a developer's `pnpm start` on 14400. Each test invocation boots its
+  // own server; reuseExistingServer:true skips the boot only if 14401 is
   // already serving (e.g. a previous test run left it running, or you have
   // another playwright watch running).
   use: {
-    baseURL: "http://localhost:4401",
+    baseURL: "http://localhost:14401",
     trace: "on-first-retry",
   },
   projects: [
@@ -40,7 +40,7 @@ module.exports = defineConfig({
   ],
   webServer: {
     command: "node server.js",
-    url: "http://localhost:4401",
+    url: "http://localhost:14401",
     reuseExistingServer: true,
     timeout: 60000,
     env: {
@@ -48,7 +48,7 @@ module.exports = defineConfig({
       FORTISOAR_USERNAME: process.env.FORTISOAR_USERNAME || "admin",
       FORTISOAR_PASSWORD: process.env.FORTISOAR_PASSWORD || "test",
       WIDGETS_SRC: process.env.WIDGETS_SRC || "",
-      PORT: "4401",
+      PORT: "14401",
     },
   },
 });

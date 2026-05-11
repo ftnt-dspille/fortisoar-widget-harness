@@ -29,7 +29,9 @@ const {
   applyInfoFix,
 } = require("./packager");
 
-const PORT = Number(process.env.PORT || 4400);
+// Default port intentionally non-common so dev sessions don't collide with
+// the 3000/4000/4400/8080 buckets that other tools grab. Override with PORT=.
+const PORT = Number(process.env.PORT || 14400);
 const HOST = process.env.FORTISOAR_HOST;
 const USER = process.env.FORTISOAR_USERNAME;
 const PASS = process.env.FORTISOAR_PASSWORD;
@@ -279,7 +281,12 @@ function upstreamMultipart({ pathAndQuery, fields, file, headers }) {
       (res) => {
         let data = "";
         res.on("data", (c) => (data += c));
-        res.on("end", () => resolve({ status: res.statusCode, body: data }));
+        res.on("end", () => {
+          if (res.statusCode < 200 || res.statusCode >= 300) {
+            console.warn(`upstreamMultipart ${res.statusCode} ${pathAndQuery} | headers: ${JSON.stringify(res.headers)} | body: ${data.slice(0, 500) || "(empty)"}`);
+          }
+          resolve({ status: res.statusCode, headers: res.headers, body: data });
+        });
       }
     );
     req.on("error", reject);
@@ -1069,7 +1076,7 @@ app.get("/_fsr/package/:id/info", (req, res) => {
   if (!w) return res.status(404).json({ error: "unknown widget id" });
   try {
     const { info } = readCurrentInfo(w);
-    res.json({ name: info.name, version: info.version });
+    res.json({ name: info.name, version: info.version, compatibility: (info.metadata && info.metadata.compatibility) || [] });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -1099,7 +1106,7 @@ app.post("/_fsr/fix-info/:id", express.json(), (req, res) => {
     // metadata.* fields the validator can suggest defaults for). Block any
     // attempt to rewrite name/version/etc through this endpoint.
     const allowedTopLevel = new Set(["metadata"]);
-    const allowedMetaKeys = new Set(["windowClass", "size", "standalone", "pages"]);
+    const allowedMetaKeys = new Set(["windowClass", "size", "standalone", "pages", "compatibility"]);
     for (const k of Object.keys(patch)) {
       if (!allowedTopLevel.has(k)) {
         return res.status(400).json({ error: `patch key '${k}' not allowed` });
