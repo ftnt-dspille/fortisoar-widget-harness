@@ -35,6 +35,10 @@ const BENIGN_CONSOLE_PATTERNS = [
   // error path will trip this; the in-code error handling is what's being
   // verified, not the browser's network-log noise.
   /Failed to load resource.*status of [45]\d{2}/i,
+  // SOAR vendor pulls in a few CDN assets (toast-ui editor css/js, mathjax,
+  // etc.) that we don't proxy in the dev harness. They're irrelevant to
+  // widget functionality and DNS-fail in CI environments without internet.
+  /ERR_NAME_NOT_RESOLVED/,
 ];
 
 function attachConsoleCapture(page, sink) {
