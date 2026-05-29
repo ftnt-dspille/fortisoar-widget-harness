@@ -9,10 +9,16 @@
 // Gated: runs only when FSRPB_LIVE=1 (real network + may cost money/time).
 "use strict";
 
+const fs = require("fs");
+const path = require("path");
 const { makeClient } = require("./lib/soarClient");
 
 const LIVE = process.env.FSRPB_LIVE === "1";
 const d = LIVE ? describe : describe.skip;
+
+// A known-valid playbook (vendored from fsr_core examples; confirmed live to
+// validate + compile clean). Used for the good-path compiler/push assertions.
+const VALID_YAML = fs.readFileSync(path.join(__dirname, "fixtures", "valid_playbook.yaml"), "utf8");
 
 d("live connector — deterministic contract", () => {
   let soar;
@@ -67,5 +73,37 @@ d("live connector — deterministic contract", () => {
     expect(e.code).toBe("parse_error");
     expect(typeof e.message).toBe("string");
     expect(e.severity).toBe("error");
+  });
+
+  test("validate_yaml: known-good playbook → ok:true, no errors", async () => {
+    const r = await soar.exec("validate_yaml", { yaml: VALID_YAML });
+    expect(r.ok).toBe(true);
+    expect(r.errors == null || r.errors.length === 0).toBe(true);
+  });
+
+  // ── Deterministic compiler: compile_yaml ─────────────────────────────────
+  test("compile_yaml: known-good playbook → ok:true with workflow_json", async () => {
+    const r = await soar.exec("compile_yaml", { yaml: VALID_YAML });
+    expect(r.ok).toBe(true);
+    expect(r.workflow_json && typeof r.workflow_json === "object").toBe(true);
+    // fsr_core emits a FortiSOAR workflow object — these keys are load-bearing.
+    expect(r.workflow_json).toHaveProperty("data");
+    expect(r.workflow_json).toHaveProperty("type");
+  });
+
+  test("compile_yaml: malformed YAML → ok:false, null workflow_json, parse_error", async () => {
+    const r = await soar.exec("compile_yaml", { yaml: "this: [bad" });
+    expect(r.ok).toBe(false);
+    expect(r.workflow_json).toBeNull();
+    expect(Array.isArray(r.errors) && r.errors.length > 0).toBe(true);
+    expect(r.errors[0].code).toBe("parse_error");
+  });
+
+  // ── T8: chat_history ─────────────────────────────────────────────────────
+  test("T8 chat_history: unknown session → { turns: [] }", async () => {
+    const r = await soar.exec("chat_history", { session_id: "__livetest_nonexistent__", limit: 50 });
+    expect(r).toHaveProperty("turns");
+    expect(Array.isArray(r.turns)).toBe(true);
+    expect(r.turns.length).toBe(0);
   });
 });
