@@ -75,6 +75,7 @@ async function withRetry(fn, { attempts = 3, label = "op" } = {}) {
       }
     } catch (e) {
       last = e;
+      if (e && e.retryable === false) throw e; // real client error — fail fast
       if (i >= attempts) break;
     }
     await new Promise((r) => setTimeout(r, 1000 * i));
@@ -98,15 +99,23 @@ async function makeClient() {
   const token = auth.json.token;
 
   // ── resolve connector + default config (never hardcode the config id) ──
-  const search = await withRetry(
-    () => request("GET", `${host}/api/integration/connectors/?search=${encodeURIComponent(CONNECTOR_SEARCH)}`, { token }),
-    { label: "resolve-connector" }
+  // The connector is redeployed frequently on this demo SOAR; during a reinstall
+  // window it briefly de-registers (search returns 0 rows). Treat "not yet
+  // present / no config" as retryable so the suite waits out the deploy window
+  // instead of failing the whole run.
+  const rec = await withRetry(
+    async () => {
+      const search = await request("GET", `${host}/api/integration/connectors/?search=${encodeURIComponent(CONNECTOR_SEARCH)}`, { token });
+      const found = search.json && search.json.data && search.json.data.find((c) => c.name === CONNECTOR_NAME);
+      if (!found || !(found.configuration || []).length) {
+        const e = new Error(`connector ${CONNECTOR_NAME} not present/configured (likely mid-deploy)`); e.retryable = true; throw e;
+      }
+      return found;
+    },
+    { label: "resolve-connector", attempts: 8 }
   );
-  const rec = search.json && search.json.data && search.json.data.find((c) => c.name === CONNECTOR_NAME);
-  if (!rec) throw new Error(`connector ${CONNECTOR_NAME} not found / not installed on ${host}`);
   const configs = rec.configuration || [];
   const chosen = configs.find((c) => c.default) || configs[0];
-  if (!chosen) throw new Error(`connector ${CONNECTOR_NAME} has no configuration`);
 
   const meta = { host, connector: CONNECTOR_NAME, version: rec.version, configId: chosen.config_id, configName: chosen.name, agent: rec.agent };
 
@@ -114,21 +123,33 @@ async function makeClient() {
   // Throws on transport/SOAR error. Returns the `.data` envelope verbatim so
   // callers assert on the connector's own contract shape.
   async function exec(operation, params = {}, { timeoutMs = 120000 } = {}) {
-    const res = await withRetry(
-      () => request("POST", `${host}/api/integration/execute/?format=json`, {
-        token,
-        timeoutMs,
-        body: { connector: CONNECTOR_NAME, version: meta.version, config: meta.configId, operation, params },
-      }),
-      { label: `exec:${operation}` }
+    // The connector on this demo SOAR is redeployed frequently; during a deploy
+    // window an op can briefly return HTTP 5xx, an empty body, or a Success
+    // envelope with null `data`. All three are transient — retry them so the
+    // suite is repeatable against a churning connector. A 4xx (bad params) is a
+    // real bug and is NOT retried.
+    return withRetry(
+      async () => {
+        const res = await request("POST", `${host}/api/integration/execute/?format=json`, {
+          token,
+          timeoutMs,
+          body: { connector: CONNECTOR_NAME, version: meta.version, config: meta.configId, operation, params },
+        });
+        if (res.status >= 400 && res.status < 500) {
+          { const e = new Error(`exec ${operation}: HTTP ${res.status} ${res.text.slice(0, 300)}`); e.retryable = false; throw e; } // real client error, no retry
+        }
+        if (res.status < 200 || res.status >= 300) {
+          const e = new Error(`exec ${operation}: HTTP ${res.status}`); e.retryable = true; throw e;
+        }
+        if (res.json && res.json.status && res.json.status !== "Success") {
+          throw new Error(`exec ${operation}: connector status=${res.json.status} message=${res.json.message || ""}`);
+        }
+        const data = res.json ? res.json.data : null;
+        if (data == null) { const e = new Error(`exec ${operation}: empty data (connector likely mid-deploy)`); e.retryable = true; throw e; }
+        return data;
+      },
+      { label: `exec:${operation}`, attempts: 5 }
     );
-    if (res.status < 200 || res.status >= 300) {
-      throw new Error(`exec ${operation}: HTTP ${res.status} ${res.text.slice(0, 300)}`);
-    }
-    if (res.json && res.json.status && res.json.status !== "Success") {
-      throw new Error(`exec ${operation}: connector status=${res.json.status} message=${res.json.message || ""}`);
-    }
-    return res.json ? res.json.data : null;
   }
 
   // Generic platform GET/DELETE for side-effect verification (e.g. confirm a
