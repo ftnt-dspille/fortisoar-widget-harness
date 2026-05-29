@@ -219,6 +219,69 @@
     if (window.__HARNESS_RECORD) {
       $rootScope.record = window.__HARNESS_RECORD;
     }
+    // SOAR view-panel / dashboard hosts pass a `model` to the widget mount
+    // — chart widgets read `$scope.$parent.model.type` to pick translation
+    // scope. In the harness the widget is mounted with no wrapping
+    // controller, so $parent IS $rootScope; expose `model` there. Prefer
+    // the loaded record (it carries `.type`); fall back to a minimal stub
+    // built from the module selector so dashboard context still works.
+    var moduleType =
+      (window.__HARNESS_RECORD && window.__HARNESS_RECORD.type) ||
+      (window.__HARNESS_STATE && window.__HARNESS_STATE.params && window.__HARNESS_STATE.params.module) ||
+      window.__HARNESS_MODULE ||
+      "alerts";
+    $rootScope.model = window.__HARNESS_RECORD || { type: moduleType };
+    if (!$rootScope.model.type) $rootScope.model.type = moduleType;
+    // Mimic the resolve map that $uibModal.open populates on a modal's scope.
+    // SOAR widget edit controllers read `$scope.$resolve.widget` (and the
+    // matching widgetBasePath) to derive the `<name>-<version>` slug for
+    // translation/asset lookups. Without this, controllers throw
+    // "Cannot read properties of undefined (reading 'widget')" at boot.
+    if (window.__HARNESS_WIDGET) {
+      var w = window.__HARNESS_WIDGET;
+      $rootScope.$resolve = {
+        widget: { name: w.name, version: w.version },
+        widgetBasePath: "widgets/installed/" + w.name + "-" + w.version + "/",
+      };
+    }
+  }]);
+
+  // Wrap translationService.instantTranslate so widget-local keys (loaded into
+  // window.__HARNESS_TRANSLATIONS by the harness before bootstrap) resolve
+  // even when the real SOAR translation tables don't know about them. The
+  // widget's widgetUtilityService.translate() delegates to translationService
+  // when present, so without this it returns the raw key string.
+  app.run(["$injector", function ($injector) {
+    var ts;
+    try { ts = $injector.get("translationService"); } catch (_) { return; }
+    if (!ts || typeof ts.instantTranslate !== "function" || ts.__harnessWrapped) return;
+    var orig = ts.instantTranslate.bind(ts);
+    ts.instantTranslate = function (key, params) {
+      var hit = harnessTranslateLookup(key);
+      if (typeof hit === "string" && hit !== key) {
+        if (params && hit.indexOf("{{") !== -1) {
+          try { return $injector.get("$interpolate")(hit)(params); } catch (_) { return hit; }
+        }
+        return hit;
+      }
+      return orig(key, params);
+    };
+    ts.__harnessWrapped = true;
+  }]);
+
+  // widgetUtilityService — SOAR ships this as part of the widget loader
+  // pipeline (slug derivation + per-widget translation bundle loading).
+  // The harness merges widget locales globally in index.html, so
+  // checkTranslationMode just needs to resolve.
+  app.factory("widgetUtilityService", ["$q", function ($q) {
+    return {
+      getWidgetNameVersion: function (widget, _basePath) {
+        if (!widget || !widget.name || !widget.version) return null;
+        return widget.name + "-" + widget.version;
+      },
+      checkTranslationMode: function () { return $q.when(true); },
+      translate: function (key) { return harnessTranslateLookup(key); },
+    };
   }]);
 
   // ui.router is NOT bundled in app.unmin.js (it's a vendor dep we stripped),

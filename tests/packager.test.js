@@ -174,6 +174,30 @@ describe("rewriteForVersion", () => {
     expect(content).not.toContain("myWidget-1.0.0/");
   });
 
+  test("rewrites bare versioned widget id strings in view.controller.js", () => {
+    // Regression: hardcoded `'myWidget-1.0.0'` strings (e.g. localStorage keys
+    // using a widgetId fallback) were missed by the rewrite because the regex
+    // required a trailing `/`. After a bump, the lint check `stale-version-ref`
+    // would block install until the string was hand-edited.
+    makeWidget(
+      tmpDir,
+      "1.0.0",
+      "var widgetId = (w.__id__ || 'myWidget-1.0.0');\n"
+    );
+    rewriteForVersion(tmpDir, "myWidget", "1.0.1");
+    const content = fs.readFileSync(path.join(tmpDir, "view.controller.js"), "utf8");
+    expect(content).toContain("'myWidget-1.0.1'");
+    expect(content).not.toContain("'myWidget-1.0.0'");
+  });
+
+  test("does not rewrite a non-version word that happens to follow `<name>-`", () => {
+    // Guard: `myWidget-utils` shouldn't be touched.
+    makeWidget(tmpDir, "1.0.0", "// see myWidget-utils.md\n");
+    rewriteForVersion(tmpDir, "myWidget", "1.0.1");
+    const content = fs.readFileSync(path.join(tmpDir, "view.controller.js"), "utf8");
+    expect(content).toContain("myWidget-utils.md");
+  });
+
   test("is idempotent — rewriting twice gives the same result", () => {
     makeWidget(tmpDir, "1.0.0");
     rewriteForVersion(tmpDir, "myWidget", "2.0.0");

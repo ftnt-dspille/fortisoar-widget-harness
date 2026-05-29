@@ -53,9 +53,12 @@ const FSR_BUNDLE_SERVICES = (() => {
 })();
 // Vendor modules loaded in index.html. Not in app.unmin.js or harness module.
 const VENDOR_PROVIDED_SERVICES = ["$resource"];
+// Services SOAR ships outside the parsed app.unmin.js bundle (e.g. widget
+// loader code that lives in a separate chunk we don't index). Treat as real.
+const KNOWN_PLATFORM_EXTRAS = ["widgetUtilityService"];
 // Real-in-SOAR set: present at install time without the widget shipping it.
 const PLATFORM_SERVICES = Array.from(
-  new Set([...FSR_BUNDLE_SERVICES, ...VENDOR_PROVIDED_SERVICES])
+  new Set([...FSR_BUNDLE_SERVICES, ...VENDOR_PROVIDED_SERVICES, ...KNOWN_PLATFORM_EXTRAS])
 );
 // Harness-only stub set: services registered solely by harness.module.js so
 // the local mount renders. Publish-time lint flags injection of these as a
@@ -115,31 +118,30 @@ function widgetAssetServiceMap(widgetDir) {
 }
 
 function widgetLocalServicesFor(widgetDir) {
+  // Mirror runtime behavior: scanAssetScripts (and SOAR's install pipeline)
+  // load every .js under widgetAssets/ before the controller boots, so any
+  // service registered by any of those files is available at injection time.
+  // We don't require a <script> tag in view.html/edit.html — the harness
+  // wires them automatically, just like SOAR does on install.
   const out = new Set();
-  for (const tpl of ["view.html", "edit.html"]) {
-    let html = "";
-    try { html = fs.readFileSync(path.join(widgetDir, tpl), "utf8"); } catch { continue; }
-    let m;
-    while ((m = WIDGET_LOCAL_SCRIPT_RE.exec(html)) !== null) {
-      const src = m[1];
-      if (/^https?:\/\//i.test(src) || src.startsWith("//")) continue; // CDN — ships nothing local
-      // SOAR serves widget assets under `<name>-<version>/...`. The src in
-      // view.html uses that prefix; the source tree doesn't. Try both.
-      const candidates = [
-        path.join(widgetDir, src),
-        path.join(widgetDir, src.replace(/^[^/]+\//, "")),
-      ];
-      for (const p of candidates) {
+  const root = path.join(widgetDir, "widgetAssets");
+  if (!fs.existsSync(root)) return [];
+  const walk = (dir) => {
+    let entries;
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); }
+    catch { return; }
+    for (const e of entries) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (e.isFile() && e.name.endsWith(".js")) {
         try {
-          if (fs.existsSync(p) && fs.statSync(p).isFile()) {
-            const js = fs.readFileSync(p, "utf8");
-            for (const name of HU.parseRegisteredServices(js)) out.add(name);
-            break;
-          }
-        } catch { /* ignore + try next candidate */ }
+          const js = fs.readFileSync(p, "utf8");
+          for (const name of HU.parseRegisteredServices(js)) out.add(name);
+        } catch { /* skip unreadable file */ }
       }
     }
-  }
+  };
+  walk(root);
   return Array.from(out);
 }
 
@@ -567,7 +569,22 @@ app.use((_req, res, next) => {
 });
 
 function mountWidget(w) {
+  // Short-circuit the optional locales file so widgets without it don't
+  // emit a noisy 404 on every preview boot. index.html fetches this path
+  // unconditionally and merges the result; an empty object is a no-op.
+  app.get(`/${w.id}/widgetAssets/locales/en.json`, (_req, res, next) => {
+    const p = path.join(w.dir, "widgetAssets", "locales", "en.json");
+    fs.access(p, fs.constants.F_OK, (err) => {
+      if (err) return res.type("application/json").send("{}");
+      next();
+    });
+  });
   app.use(`/${w.id}`, express.static(w.dir, { etag: false, cacheControl: false }));
+  // Hard 404 for anything under /<widget-id>/ that wasn't found in the widget
+  // folder. Without this, the trailing SOAR-proxy middleware would forward
+  // the request and return the SPA index.html, which silently breaks widget
+  // code that expects JSON (e.g. fsrPbMockConnector loading fixtures).
+  app.use(`/${w.id}`, (_req, res) => res.status(404).type("text/plain").send("widget asset not found"));
   console.log(`mount  /${w.id}  ->  ${w.dir}`);
 }
 
@@ -1417,17 +1434,62 @@ function extractTgz(tgzPath, destDir) {
   });
 }
 
+// Shared pipeline: take a tgz buffer, extract its single `<name>-<ver>/` root
+// into widgets-src/<folder>/widget, rewrite controllers to the dev suffix, and
+// hot-attach the widget. Returns the registered widget record or throws an
+// Error with .status set for HTTP-mappable failures.
+async function installTgzBuffer(tgzBuf, folderArg) {
+  if (folderArg && !SAFE_FOLDER_RE.test(folderArg)) {
+    const err = new Error("folder must match [A-Za-z0-9_-]+");
+    err.status = 400; throw err;
+  }
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "fsr-tgz-"));
+  const tgzPath = path.join(tmp, "widget.tgz");
+  try {
+    fs.writeFileSync(tgzPath, tgzBuf);
+    await extractTgz(tgzPath, tmp);
+    const entries = fs
+      .readdirSync(tmp)
+      .filter((n) => n !== "widget.tgz")
+      .map((n) => ({ n, full: path.join(tmp, n) }))
+      .filter((e) => fs.statSync(e.full).isDirectory());
+    if (entries.length !== 1) {
+      const err = new Error(`unexpected tgz layout: ${entries.map((e) => e.n).join(", ") || "<empty>"}`);
+      err.status = 400; throw err;
+    }
+    const extracted = entries[0].full;
+    const infoPath = path.join(extracted, "info.json");
+    if (!fs.existsSync(infoPath)) {
+      const err = new Error("tgz missing info.json"); err.status = 400; throw err;
+    }
+    const info = JSON.parse(fs.readFileSync(infoPath, "utf8"));
+    const folder = folderArg || deriveFolderName(info.name);
+    if (!folder) {
+      const err = new Error("could not derive folder name"); err.status = 400; throw err;
+    }
+    const dest = path.join(WIDGETS_SRC, folder);
+    if (fs.existsSync(dest)) {
+      const err = new Error(`widgets-src/${folder} already exists`); err.status = 409; throw err;
+    }
+    fs.mkdirSync(dest, { recursive: true });
+    fs.cpSync(extracted, path.join(dest, "widget"), { recursive: true });
+    try {
+      syncSourceToInfoJson(path.join(dest, "widget"), info.name, info.version);
+    } catch (e) {
+      console.warn(`tgz install: controller rewrite failed for ${folder}: ${e.message}`);
+    }
+    return { widget: registerImportedWidget(folder), folder, info };
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
 app.post("/_fsr/import/:uuid", express.json(), async (req, res) => {
   const uuid = req.params.uuid;
   if (!/^[a-zA-Z0-9-]+$/.test(uuid)) return res.status(400).json({ error: "bad uuid" });
   const body = req.body || {};
   const folderArg = body.folder ? String(body.folder).trim() : "";
-  if (folderArg && !SAFE_FOLDER_RE.test(folderArg)) {
-    return res.status(400).json({ error: "folder must match [A-Za-z0-9_-]+" });
-  }
 
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "fsr-import-"));
-  const tgzPath = path.join(tmp, "widget.tgz");
   try {
     const token = await ensureToken();
     const exportRes = await upstreamRequestBinary({
@@ -1446,54 +1508,36 @@ app.post("/_fsr/import/:uuid", express.json(), async (req, res) => {
         body: exportRes.body.slice(0, 300).toString("utf8"),
       });
     }
-    fs.writeFileSync(tgzPath, exportRes.body);
-    await extractTgz(tgzPath, tmp);
-
-    // tgz layout from SOAR mirrors the packager: a single root dir
-    // `<name>-<version>/` containing info.json, view.html, etc.
-    const entries = fs
-      .readdirSync(tmp)
-      .filter((n) => n !== "widget.tgz")
-      .map((n) => ({ n, full: path.join(tmp, n) }))
-      .filter((e) => fs.statSync(e.full).isDirectory());
-    if (entries.length !== 1) {
-      return res.status(502).json({
-        error: `unexpected tgz layout: ${entries.map((e) => e.n).join(", ") || "<empty>"}`,
-      });
-    }
-    const extracted = entries[0].full;
-    const infoPath = path.join(extracted, "info.json");
-    if (!fs.existsSync(infoPath)) {
-      return res.status(502).json({ error: "tgz missing info.json" });
-    }
-    const info = JSON.parse(fs.readFileSync(infoPath, "utf8"));
-    const folder = folderArg || deriveFolderName(info.name);
-    if (!folder) return res.status(400).json({ error: "could not derive folder name" });
-    const dest = path.join(WIDGETS_SRC, folder);
-    if (fs.existsSync(dest)) {
-      return res.status(409).json({ error: `widgets-src/${folder} already exists` });
-    }
-
-    fs.mkdirSync(dest, { recursive: true });
-    fs.cpSync(extracted, path.join(dest, "widget"), { recursive: true });
-
-    const w = registerImportedWidget(folder);
+    const { widget: w, folder, info } = await installTgzBuffer(exportRes.body, folderArg);
     console.log(`import: ${info.name}-${info.version} -> widgets-src/${folder}`);
-    res.json({
-      ok: true,
-      folder,
-      id: w.id,
-      name: w.name,
-      version: w.version,
-      title: w.title,
-    });
+    res.json({ ok: true, folder, id: w.id, name: w.name, version: w.version, title: w.title });
   } catch (e) {
     console.error(`import failed for ${uuid}: ${e.message}`);
-    res.status(500).json({ error: e.message });
-  } finally {
-    fs.rmSync(tmp, { recursive: true, force: true });
+    res.status(e.status || 500).json({ error: e.message });
   }
 });
+
+// Manual upload: POST a .tgz body (application/gzip or application/octet-stream)
+// with optional `?folder=` query. Same extraction + register pipeline as the
+// SOAR-export import, just without the upstream call.
+app.post(
+  "/_fsr/upload-tgz",
+  express.raw({ type: ["application/gzip", "application/x-gzip", "application/octet-stream"], limit: "100mb" }),
+  async (req, res) => {
+    if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
+      return res.status(400).json({ error: "request body must be a .tgz (raw bytes)" });
+    }
+    const folderArg = req.query.folder ? String(req.query.folder).trim() : "";
+    try {
+      const { widget: w, folder, info } = await installTgzBuffer(req.body, folderArg);
+      console.log(`upload-tgz: ${info.name}-${info.version} -> widgets-src/${folder} (${req.body.length} bytes)`);
+      res.json({ ok: true, folder, id: w.id, name: w.name, version: w.version, title: w.title });
+    } catch (e) {
+      console.error(`upload-tgz failed: ${e.message}`);
+      res.status(e.status || 500).json({ error: e.message });
+    }
+  }
+);
 
 app.get("/_fsr/stylesheets", async (_req, res) => {
   try {

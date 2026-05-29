@@ -80,11 +80,16 @@ function rewriteForVersion(dir, widgetName, version) {
     capitalize(widgetName),
     decapitalize(widgetName),
   ]);
+  // Match `<name>-<version>` followed by either `/` (path ref like
+  // `fsrPlaybookBuilder-1.0.1/widgetAssets/...`) or a non-version boundary
+  // (bare widget ID used as a string, e.g. `'fsrPlaybookBuilder-1.0.1'`).
+  // Without the bare-ID arm, hardcoded version IDs survive a bump and trip
+  // the stale-version-ref lint at install time.
   const versionPathRe = new RegExp(
-    `\\b${escapeRegex(widgetName)}-\\d+(?:\\.\\d+)*(?:[-.][A-Za-z0-9.]+)?/`,
+    `\\b${escapeRegex(widgetName)}-\\d+(?:\\.\\d+)*(?:[-.][A-Za-z0-9.]+)?(/|(?![\\w.-]))`,
     "g"
   );
-  const versionPathReplacement = `${widgetName}-${version}/`;
+  const versionPathReplacement = (_m, tail) => `${widgetName}-${version}${tail || ""}`;
 
   function rewrite(absPath, opts) {
     if (!fs.existsSync(absPath)) return;
@@ -106,12 +111,14 @@ function rewriteForVersion(dir, widgetName, version) {
     fs.writeFileSync(absPath, contents);
   }
 
-  rewrite(path.join(dir, "edit.controller.js"));
-  rewrite(path.join(dir, "view.controller.js"));
+  // `rewritePaths: true` everywhere — controllers can also carry versioned
+  // refs (e.g. `'fsrPlaybookBuilder-1.0.1'` as a localStorage key fallback,
+  // or `<script>`-loaded asset paths). Restricting path rewrites to HTML
+  // files left bare-ID strings in controllers stale and tripped the
+  // stale-version-ref lint after every bump.
+  rewrite(path.join(dir, "edit.controller.js"), { rewritePaths: true });
+  rewrite(path.join(dir, "view.controller.js"), { rewritePaths: true });
   rewrite(path.join(dir, "view.html"), { rewritePaths: true });
-  // edit.html can also <script>-load widgetAssets files (e.g. c3charts'
-  // exampleCatalog). Path rewriting keeps those tags in lockstep with
-  // info.json on every bump, same as view.html.
   rewrite(path.join(dir, "edit.html"), { rewritePaths: true });
 }
 
@@ -130,7 +137,13 @@ function shouldSkipName(name) {
     name === "__MACOSX" ||
     name.startsWith("._") ||
     name.startsWith(".") ||
-    name.startsWith("_")
+    name.startsWith("_") ||
+    // Dev-only artifacts that must NOT ship to SOAR: remote probes run by
+    // `widget verify-remote`, and any *.test.js / *.spec.js that snuck into
+    // the widget source. SOAR loads every .js under widgetAssets/ at install
+    // time, so shipping a probe would crash the host on load.
+    name === "remote.probe.js" ||
+    /\.(test|spec)\.js$/.test(name)
   );
 }
 
@@ -206,8 +219,11 @@ function validateInfoMetadata(info) {
   if (typeof meta.standalone !== "boolean") {
     warnings.push("info.json: metadata.standalone not set (boolean) — defaults vary by SOAR version");
   }
-  if (!Array.isArray(meta.pages) || meta.pages.length === 0) {
-    errors.push("info.json: metadata.pages must be a non-empty array — SOAR uses this to decide where the widget can be placed");
+  const hasPages = Array.isArray(meta.pages) && meta.pages.length > 0;
+  const hasContexts = Array.isArray(meta.contexts) && meta.contexts.length > 0;
+  const hasEnableFor = meta.view && Array.isArray(meta.view.enableFor) && meta.view.enableFor.length > 0;
+  if (!hasPages && !hasContexts && !hasEnableFor) {
+    errors.push("info.json: metadata.pages must be a non-empty array (or set metadata.contexts / metadata.view.enableFor) — SOAR needs at least one placement hint");
   }
 
   if (!Array.isArray(meta.compatibility) || meta.compatibility.length === 0) {
@@ -295,7 +311,9 @@ function suggestInfoFix(info) {
   const meta = safe.metadata && typeof safe.metadata === "object" ? safe.metadata : {};
   const patch = {};
   const metaPatch = {};
-  if (!Array.isArray(meta.pages) || meta.pages.length === 0) {
+  const hasContexts = Array.isArray(meta.contexts) && meta.contexts.length > 0;
+  const hasEnableFor = meta.view && Array.isArray(meta.view.enableFor) && meta.view.enableFor.length > 0;
+  if ((!Array.isArray(meta.pages) || meta.pages.length === 0) && !hasContexts && !hasEnableFor) {
     metaPatch.pages = ["Dashboard", "View Panel"];
   }
   if (Object.keys(metaPatch).length === 0) return null;

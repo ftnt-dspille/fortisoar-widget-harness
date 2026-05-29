@@ -22,6 +22,8 @@ module.exports = defineConfig({
   // produces a full trace artifact for diagnosis when something does flake
   // repeatedly.
   retries: 1,
+  workers: process.env.CI ? 2 : 4,
+  fullyParallel: true,
   reporter: "list",
   // Tests run against a dedicated harness on port 14401 so they never collide
   // with a developer's `pnpm start` on 14400. Each test invocation boots its

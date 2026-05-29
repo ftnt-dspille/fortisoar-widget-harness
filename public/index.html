@@ -245,7 +245,9 @@
         position: fixed;
         top: 0;
         right: 0;
-        width: 480px;
+        width: 55vw;
+        min-width: 480px;
+        max-width: 1100px;
         height: 100vh;
         background: #fff;
         border-left: 1px solid #dfe3e8;
@@ -258,6 +260,52 @@
         background: #252526;
         border-left-color: #3c3c3c;
       }
+      /* Close button only visible in drawer mode — mirrors the host chrome
+         (Minimize Window) so the user can dismiss the drawer that's covering
+         the records grid behind it. */
+      #harness-drawer-close {
+        display: none;
+        position: fixed;
+        top: 8px;
+        right: 8px;
+        z-index: 60;
+        width: 30px;
+        height: 30px;
+        padding: 0;
+        line-height: 1;
+        font-size: 16px;
+        border-radius: 8px;
+        cursor: pointer;
+        background: rgba(0, 0, 0, 0.55);
+        color: #fff;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+      }
+      #harness-drawer-close:hover { background: rgba(0, 0, 0, 0.75); }
+      .harness-frame.ctx-drawer #harness-drawer-close { display: inline-flex; align-items: center; justify-content: center; }
+      .harness-frame.ctx-drawer.drawer-hidden #widget-host { display: none; }
+      .harness-frame.ctx-drawer.drawer-hidden #harness-drawer-close { display: none; }
+      /* Reopen trigger only visible after the drawer's been closed. Anchored
+         to the bottom-right so it doesn't overlap the harness top toolbar
+         (Edit config / Package / Import / Settings / Debug). */
+      #harness-drawer-open {
+        display: none;
+        position: fixed;
+        bottom: 16px;
+        right: 16px;
+        z-index: 60;
+        height: 36px;
+        padding: 0 16px;
+        font-size: 12px;
+        font-weight: 600;
+        border-radius: 999px;
+        cursor: pointer;
+        background: rgba(20, 184, 166, 0.95);
+        color: #fff;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        box-shadow: 0 6px 20px rgba(20, 184, 166, 0.4);
+      }
+      #harness-drawer-open:hover { background: rgba(20, 184, 166, 1); }
+      .harness-frame.ctx-drawer.drawer-hidden #harness-drawer-open { display: inline-flex; align-items: center; }
       .harness-record-header {
         font-size: 12px;
         padding: 6px 12px;
@@ -332,15 +380,31 @@
         background: #3a2f10; border-color: #6b5618; color: #f1d68a;
       }
 
+      /* "Configure this widget" prompt — shown when a freshly-imported
+         widget has no saved config yet. Mirrors the lint-banner pattern
+         so it stays legible against either chrome theme. */
+      .harness-config-prompt {
+        padding: 20px; border: 1px dashed #888; background: #f8f8f8; color: #333;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        border-radius: 4px; text-align: center;
+      }
+      .harness-config-prompt h4 { font-weight: 600; margin: 0 0 8px; font-size: 14px; }
+      .harness-config-prompt p   { margin: 0 0 14px; color: #555; }
+      body.theme-dark .harness-config-prompt {
+        background: #252526; border-color: #4a4a4a; color: #dcdcdc;
+      }
+      body.theme-dark .harness-config-prompt p { color: #b0b0b0; }
+
       /* Bottom debug drawer. Holds Errors / Network / Console tabs. */
       .harness-drawer {
         position: fixed; left: 0; right: 0; bottom: 0; z-index: 200;
         background: #1b1f24; color: #dcdcdc; border-top: 1px solid #3a4049;
         font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
         display: flex; flex-direction: column; max-height: 50vh;
-        transform: translateY(calc(100% - 32px)); transition: transform 0.18s ease;
+        transform: translateY(100%); transition: transform 0.18s ease;
+        pointer-events: none;
       }
-      .harness-drawer.open { transform: translateY(0); }
+      .harness-drawer.open { transform: translateY(0); pointer-events: auto; }
       body.theme-light .harness-drawer { background: #f0f2f5; color: #1b1f24; border-top-color: #c0c5cc; }
       .harness-drawer-bar {
         display: flex; align-items: center; gap: 4px; padding: 4px 8px;
@@ -465,7 +529,7 @@
         </button>
         <button id="package-toggle" class="btn btn-sm btn-default" type="button">Package</button>
         <button id="import-toggle" class="btn btn-sm btn-default" type="button"
-                title="Browse widgets installed on the proxied SOAR and copy one into widgets-src/">
+                title="Import a widget — search FortiSOAR or upload a .tgz">
           Import…
         </button>
         <!-- Settings popover: theme, FortiSOAR CSS, width, cache. Rare day-to-day touches. -->
@@ -573,6 +637,8 @@
 
     <div id="harness-frame" class="harness-frame">
       <div id="record-header" class="harness-record-header" style="display: none"></div>
+      <button id="harness-drawer-close" type="button" title="Close drawer">✕</button>
+      <button id="harness-drawer-open" type="button" title="Open drawer">☰ Open drawer</button>
       <div id="widget-host">
         <div class="harness-empty">loading…</div>
       </div>
@@ -581,19 +647,31 @@
     <div id="import-modal-backdrop" class="harness-modal-backdrop">
       <div class="harness-modal" style="max-width: 760px;">
         <div class="harness-modal-head">
-          <span>Import widget from FortiSOAR</span>
+          <span>Import widget</span>
           <button id="import-modal-close" class="btn btn-xs btn-default" type="button">close</button>
         </div>
         <div class="harness-modal-body" style="display:flex;flex-direction:column;gap:8px;">
-          <div style="display:flex;gap:8px;align-items:center;">
-            <input id="import-filter" placeholder="filter by name/title…" style="flex:1;padding:4px 8px;" />
-            <label style="font-size:12px;display:flex;gap:4px;align-items:center;">
-              <input type="checkbox" id="import-show-inbuilt" checked /> include built-in
-            </label>
-            <button id="import-refresh" class="btn btn-xs btn-default" type="button">refresh</button>
+          <div style="display:flex;gap:4px;">
+            <button id="import-mode-soar" class="btn btn-xs btn-default" type="button">From FortiSOAR</button>
+            <button id="import-mode-upload" class="btn btn-xs btn-default" type="button">Upload .tgz</button>
           </div>
-          <div id="import-list" style="overflow:auto;max-height:50vh;border:1px solid rgba(255,255,255,0.1);">
-            <div style="padding:12px;opacity:0.6;">loading…</div>
+          <div id="import-pane-soar" style="display:flex;flex-direction:column;gap:8px;">
+            <div style="display:flex;gap:8px;align-items:center;">
+              <input id="import-filter" placeholder="filter by name/title…" style="flex:1;padding:4px 8px;" />
+              <label style="font-size:12px;display:flex;gap:4px;align-items:center;">
+                <input type="checkbox" id="import-show-inbuilt" checked /> include built-in
+              </label>
+              <button id="import-refresh" class="btn btn-xs btn-default" type="button">refresh</button>
+            </div>
+            <div id="import-list" style="overflow:auto;max-height:50vh;border:1px solid rgba(255,255,255,0.1);">
+              <div style="padding:12px;opacity:0.6;">loading…</div>
+            </div>
+          </div>
+          <div id="import-pane-upload" style="display:none;flex-direction:column;gap:8px;">
+            <div style="display:flex;gap:8px;align-items:center;">
+              <input id="import-tgz-file" type="file" accept=".tgz,.tar.gz,application/gzip,application/x-gzip" style="flex:1;" />
+            </div>
+            <div id="import-tgz-info" style="opacity:0.6;font-size:12px;min-height:1em;">no file selected</div>
           </div>
           <label style="font-size:12px;display:flex;gap:6px;align-items:center;">
             folder
@@ -726,6 +804,13 @@
           cacheClear.disabled = true;
           try {
             await fetch("/_fsr/cache", { method: "DELETE" });
+            // Also drop the browser-side stale-while-revalidate cache so
+            // the next mount pulls fresh data from upstream.
+            try {
+              for (const k of Object.keys(localStorage)) {
+                if (k.startsWith("harness.cache.")) localStorage.removeItem(k);
+              }
+            } catch (_) {}
             cacheClear.textContent = "Cleared";
             setTimeout(() => { cacheClear.textContent = "Clear cache"; }, 1200);
           } finally { cacheClear.disabled = false; }
@@ -749,6 +834,193 @@
           div.textContent = lines.join("\n");
           div.style.whiteSpace = "pre-wrap";
           lintWarningsHost.appendChild(div);
+        }
+
+        // ------------------------ SOAR metadata cache ------------------------
+        // SOAR's /api/3/model_metadatas response (~1MB) and the per-module
+        // /api/locale/1/<type>/en.json fetches (~45 in parallel) dominate
+        // first-paint latency. They rarely change between dev sessions, so
+        // we cache the merged result in localStorage with a 24h TTL.
+        //
+        // Hit  → hydrate window + cs.metadata.* synchronously, kick off a
+        //         background refresh, let the widget mount immediately.
+        // Miss → fetch inline, populate cache, then mount.
+        const HARNESS_CACHE_PREFIX = "harness.cache.v1.";
+        const HARNESS_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+        function cacheGet(key) {
+          try {
+            const raw = localStorage.getItem(HARNESS_CACHE_PREFIX + key);
+            if (!raw) return null;
+            const parsed = JSON.parse(raw);
+            if (!parsed || typeof parsed.t !== "number") return null;
+            if (Date.now() - parsed.t > HARNESS_CACHE_TTL_MS) return null;
+            return parsed.v;
+          } catch (_) { return null; }
+        }
+        function cacheSet(key, value) {
+          try {
+            localStorage.setItem(
+              HARNESS_CACHE_PREFIX + key,
+              JSON.stringify({ t: Date.now(), v: value })
+            );
+          } catch (_) { /* quota — skip */ }
+        }
+
+        async function fetchStaticTranslations() {
+          try {
+            const r = await fetch("/locales/static/en.json", {
+              credentials: "include",
+              headers: { Accept: "application/json" },
+            });
+            return r.ok ? await r.json() : null;
+          } catch (_) { return null; }
+        }
+        async function fetchModelMetadatas() {
+          try {
+            const r = await fetch(
+              "/api/3/model_metadatas?$limit=1000&$relationships=true&$orderby=type",
+              { credentials: "include", headers: { Accept: "application/json" } }
+            );
+            const ct = r.headers.get("content-type") || "";
+            if (!r.ok || !ct.includes("json")) {
+              console.warn("[harness] model_metadatas fetch failed status=" + r.status + " ct=" + ct);
+              return [];
+            }
+            const body = await r.json();
+            return body["hydra:member"] || [];
+          } catch (e) {
+            console.warn("[harness] model_metadatas fetch threw", e);
+            return [];
+          }
+        }
+        async function fetchModuleLocale(type) {
+          try {
+            const r = await fetch("/api/locale/1/" + type + "/en.json", {
+              credentials: "include",
+              headers: { Accept: "application/json" },
+            });
+            const ct = r.headers.get("content-type") || "";
+            if (!r.ok || !ct.includes("json")) return null;
+            return await r.json();
+          } catch (_) { return null; }
+        }
+        function applyMetadatasToLocalStorage(items) {
+          items.forEach((m) => {
+            try { localStorage.setItem("cs.metadata." + m.type, JSON.stringify(m)); } catch (_) {}
+          });
+        }
+        async function refreshSoarMetadata() {
+          // Fire-and-forget background refresh. Updates the cache for the
+          // next session but does not block the current mount.
+          const staticTr = await fetchStaticTranslations();
+          const items = await fetchModelMetadatas();
+          if (items.length > 0) {
+            applyMetadatasToLocalStorage(items);
+            const localeBodies = await Promise.all(items.map((m) => fetchModuleLocale(m.type)));
+            const merged = Object.assign({}, staticTr || {});
+            for (const body of localeBodies) if (body) Object.assign(merged, body);
+            cacheSet("translations", merged);
+            cacheSet("model_metadatas", items);
+            // Don't clobber the in-memory translations the running widget
+            // is already bound to — the next mount will pick the new blob
+            // up from cache.
+          }
+        }
+
+        async function preloadSoarMetadata() {
+          if (window.__HARNESS_MMD_PRELOADED && window.__HARNESS_TRANSLATIONS) return;
+
+          // Always merge SOAR translations INTO whatever __HARNESS_TRANSLATIONS
+          // already has — never overwrite. loadWidgetTranslations() may have
+          // already merged widget-local keys before this runs (or runs
+          // concurrently), and replacing the object would silently drop them,
+          // causing widget labels to render as raw keys after a re-open.
+          const mergeIntoTranslations = (extra) => {
+            if (!extra || typeof extra !== "object") return;
+            window.__HARNESS_TRANSLATIONS = Object.assign(
+              {},
+              extra,
+              window.__HARNESS_TRANSLATIONS || {}
+            );
+          };
+
+          const cachedTr = cacheGet("translations");
+          const cachedMmd = cacheGet("model_metadatas");
+          if (cachedTr && Array.isArray(cachedMmd) && cachedMmd.length > 0) {
+            mergeIntoTranslations(cachedTr);
+            applyMetadatasToLocalStorage(cachedMmd);
+            window.__HARNESS_MMD_PRELOADED = true;
+            // Stale-while-revalidate: refresh without blocking the mount.
+            setTimeout(() => { refreshSoarMetadata(); }, 0);
+            return;
+          }
+
+          // Cold path — no cache, so we have to wait. This matches the
+          // pre-cache behavior.
+          const staticTr = await fetchStaticTranslations();
+          const items = await fetchModelMetadatas();
+          if (items.length === 0) {
+            console.warn("[harness] model_metadatas returned 0 items — chart widgets will reject with METADATA_NOT_FOUND. Is your SOAR session authed?");
+            mergeIntoTranslations(staticTr);
+            return;
+          }
+          applyMetadatasToLocalStorage(items);
+          const localeBodies = await Promise.all(items.map((m) => fetchModuleLocale(m.type)));
+          const merged = Object.assign({}, staticTr || {});
+          for (const body of localeBodies) if (body) Object.assign(merged, body);
+          mergeIntoTranslations(merged);
+          window.__HARNESS_MMD_PRELOADED = true;
+          cacheSet("translations", merged);
+          cacheSet("model_metadatas", items);
+        }
+
+        // Fetch the widget's widgetAssets/locales/en.json and merge it into
+        // window.__HARNESS_TRANSLATIONS so keys like "dataVisualization.LABEL_TITLE"
+        // resolve. The harness translationService wrapper (harness.module.js)
+        // reads from this map before delegating to the real SOAR service.
+        // Idempotent: skips work if we've already merged this widget's id.
+        window.__HARNESS_LOADED_WIDGET_LOCALES = window.__HARNESS_LOADED_WIDGET_LOCALES || {};
+        async function loadWidgetTranslations(widget) {
+          if (!widget || window.__HARNESS_LOADED_WIDGET_LOCALES[widget.id]) return;
+          try {
+            const r = await fetch("/" + widget.id + "/widgetAssets/locales/en.json");
+            if (!r.ok) {
+              window.__HARNESS_LOADED_WIDGET_LOCALES[widget.id] = true;
+              return;
+            }
+            const body = await r.json();
+            window.__HARNESS_TRANSLATIONS = Object.assign(
+              {},
+              window.__HARNESS_TRANSLATIONS || {},
+              body || {}
+            );
+            window.__HARNESS_LOADED_WIDGET_LOCALES[widget.id] = true;
+          } catch (_) {
+            window.__HARNESS_LOADED_WIDGET_LOCALES[widget.id] = true;
+          }
+        }
+
+        function renderConfigPrompt(hostEl, widget) {
+          while (hostEl.firstChild) hostEl.removeChild(hostEl.firstChild);
+          const box = document.createElement("div");
+          box.className = "harness-config-prompt";
+          const head = document.createElement("h4");
+          head.textContent = "Configure this widget to preview it";
+          box.appendChild(head);
+          const body = document.createElement("p");
+          body.textContent =
+            (widget.title || widget.name) +
+            " has no saved configuration yet. Click Edit Config above, pick a module / settings, and save to mount the widget.";
+          box.appendChild(body);
+          const btn = document.createElement("button");
+          btn.textContent = "Open Edit Config";
+          btn.className = "btn btn-sm btn-primary";
+          btn.addEventListener("click", () => {
+            const editBtn = document.getElementById("edit-config");
+            if (editBtn) editBtn.click();
+          });
+          box.appendChild(btn);
+          hostEl.appendChild(box);
         }
 
         function renderLintBanner(hostEl, widget, errors) {
@@ -1070,21 +1342,83 @@
         });
         importShowInbuilt.addEventListener("change", renderImportList);
 
-        importGo.addEventListener("click", async () => {
-          if (!importPickedUuid) return;
+        // Mode toggle inside the import modal: "From FortiSOAR" (search live
+        // SOAR via /_fsr/remote-widgets) vs "Upload .tgz" (POST a local file
+        // to /_fsr/upload-tgz). The Import button dispatches based on mode.
+        const importModeSoar = document.getElementById("import-mode-soar");
+        const importModeUpload = document.getElementById("import-mode-upload");
+        const importPaneSoar = document.getElementById("import-pane-soar");
+        const importPaneUpload = document.getElementById("import-pane-upload");
+        const importTgzFile = document.getElementById("import-tgz-file");
+        const importTgzInfo = document.getElementById("import-tgz-info");
+        let importMode = "soar";
+        function setImportMode(mode) {
+          importMode = mode;
+          const isSoar = mode === "soar";
+          importPaneSoar.style.display = isSoar ? "flex" : "none";
+          importPaneUpload.style.display = isSoar ? "none" : "flex";
+          importModeSoar.classList.toggle("btn-primary", isSoar);
+          importModeSoar.classList.toggle("btn-default", !isSoar);
+          importModeUpload.classList.toggle("btn-primary", !isSoar);
+          importModeUpload.classList.toggle("btn-default", isSoar);
+          importStatus.textContent = "";
+          updateImportGo();
+        }
+        function updateImportGo() {
+          if (importMode === "soar") importGo.disabled = !importPickedUuid;
+          else importGo.disabled = !(importTgzFile.files && importTgzFile.files[0]);
+        }
+        importModeSoar.addEventListener("click", () => setImportMode("soar"));
+        importModeUpload.addEventListener("click", () => setImportMode("upload"));
+        importTgzFile.addEventListener("change", () => {
+          const f = importTgzFile.files && importTgzFile.files[0];
+          if (f) {
+            importTgzInfo.textContent = f.name + " — " + f.size.toLocaleString() + " bytes";
+            if (!importFolder.value) {
+              const stem = f.name.replace(/\.t(ar\.)?gz$/i, "").replace(/-\d+(\.\d+)+$/, "");
+              importFolder.placeholder = stem.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+            }
+          } else {
+            importTgzInfo.textContent = "no file selected";
+          }
+          updateImportGo();
+        });
+        setImportMode("soar");
+
+        async function doSoarImport() {
           const folder = (importFolder.value || "").trim();
+          const r = await fetch("/_fsr/import/" + encodeURIComponent(importPickedUuid), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(folder ? { folder } : {}),
+          });
+          const j = await r.json();
+          if (!r.ok) throw new Error(j.error || ("HTTP " + r.status));
+          return j;
+        }
+        async function doTgzUpload() {
+          const file = importTgzFile.files[0];
+          const folder = (importFolder.value || "").trim();
+          const buf = await file.arrayBuffer();
+          const url = "/_fsr/upload-tgz" + (folder ? "?folder=" + encodeURIComponent(folder) : "");
+          const r = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/gzip" },
+            body: buf,
+          });
+          const j = await r.json();
+          if (!r.ok) throw new Error(j.error || ("HTTP " + r.status));
+          return j;
+        }
+
+        importGo.addEventListener("click", async () => {
+          if (importMode === "soar" && !importPickedUuid) return;
+          if (importMode === "upload" && !(importTgzFile.files && importTgzFile.files[0])) return;
           importGo.disabled = true;
-          importStatus.textContent = "importing…";
+          importStatus.textContent = importMode === "upload" ? "uploading…" : "importing…";
           try {
-            const r = await fetch("/_fsr/import/" + encodeURIComponent(importPickedUuid), {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(folder ? { folder } : {}),
-            });
-            const j = await r.json();
-            if (!r.ok) throw new Error(j.error || ("HTTP " + r.status));
+            const j = importMode === "upload" ? await doTgzUpload() : await doSoarImport();
             importStatus.textContent = "imported " + j.id + " into widgets-src/" + j.folder;
-            // Add and select the new widget in the dropdown.
             const opt = document.createElement("option");
             opt.value = j.id;
             opt.textContent = j.title + " (" + j.id + ")";
@@ -1097,7 +1431,7 @@
             location.reload();
           } catch (e) {
             importStatus.textContent = "import failed: " + e.message;
-            importGo.disabled = false;
+            updateImportGo();
           }
         });
 
@@ -1421,9 +1755,16 @@
           return;
         }
 
+        // Saved id includes the version (e.g. `fsrPlaybookBuilder-1.0.4`),
+        // so after a bump the literal id no longer matches. Fall back to
+        // matching by widget name (the stable part before `-<version>`) so
+        // refreshes after install land back on the same widget.
         const savedId = localStorage.getItem("harness.widget");
+        const savedName = savedId ? savedId.replace(/-\d+(?:\.\d+)*(?:[-.][A-Za-z0-9.]+)?$/, "") : "";
         const currentId =
-          (widgets.find((w) => w.id === savedId) || widgets[0]).id;
+          (widgets.find((w) => w.id === savedId) ||
+            (savedName && widgets.find((w) => w.name === savedName)) ||
+            widgets[0]).id;
         for (const w of widgets) {
           const opt = document.createElement("option");
           opt.value = w.id;
@@ -1559,8 +1900,16 @@
           } catch (_) {}
 
           window.__HARNESS_RECORD = record || undefined;
+          window.__HARNESS_MODULE = modEl.value || "alerts";
+          window.__HARNESS_WIDGET = { name: current.name, version: current.version };
+          await loadWidgetTranslations(current);
           window.__HARNESS_CONFIG = HU.mergeConfig(
-            { title: current.title, module: modEl.value || "alerts", defaultTemplate: "" },
+            // `wid` is the widget instance id SOAR sets on each placement.
+            // Some widgets (e.g. dataVisualization) build DOM ids like
+            // `eChart-{{config.wid}}` and then `getElementById('eChart-' + wid)`
+            // from JS — undefined makes the JS lookup miss the template-rendered
+            // element. Stable per-widget value keeps both sides in sync.
+            { title: current.title, module: modEl.value || "alerts", defaultTemplate: "", wid: "harness-" + current.id },
             savedConfig
           );
           window.__HARNESS_STATE = HU.stateForContext(ctx, {
@@ -1580,69 +1929,28 @@
             renderLintBanner(host, current, lintErrors);
             return;
           }
-          // Preload SOAR model metadata into localStorage BEFORE bootstrap.
+          // Freshly imported / never-configured widgets typically blow up
+          // inside the view controller because $scope.config.resource (or
+          // an equivalent field the widget reads on init) is undefined.
+          // Block bootstrap and prompt the user to open Edit Config first.
+          // Once they save anything, savedConfig is non-null and we mount
+          // normally — bad saved values are the widget author's problem.
+          if (savedConfig == null) {
+            renderConfigPrompt(host, current);
+            return;
+          }
+          // Preload SOAR model metadata + translations before bootstrap.
           // modelMetadatasService.getMetadataByModuleType() reads synchronously
           // from localStorage (key: "cs.metadata.<type>"); Entity rejects with
-          // METADATA_NOT_FOUND if the entry isn't there. Doing the REST fetch
-          // up front avoids the race where chart widgets mount before the
-          // in-injector loadAllModules() promise resolves.
-          // Preload SOAR translations: edit forms (EditChartCtrl etc.) render
-          // labels via the `translate` filter, which the harness $translate
-          // stub resolves against window.__HARNESS_TRANSLATIONS. Without this
-          // every label shows as the raw key (COMPONENTS.VIEW_TEMPLATES.…).
-          if (!window.__HARNESS_TRANSLATIONS) {
-            try {
-              const r = await fetch("/locales/static/en.json", {
-                credentials: "include",
-                headers: { Accept: "application/json" },
-              });
-              if (r.ok) {
-                window.__HARNESS_TRANSLATIONS = await r.json();
-              } else {
-                console.warn("[harness] translations preload failed", r.status);
-              }
-            } catch (e) { console.warn("[harness] translations preload threw", e); }
-          }
-
-          if (!window.__HARNESS_MMD_PRELOADED) {
-            try {
-              const r = await fetch("/api/3/model_metadatas?$limit=1000&$relationships=true&$orderby=type", {
-                credentials: "include",
-                headers: { Accept: "application/json" },
-              });
-              const ct = r.headers.get("content-type") || "";
-              if (r.ok && ct.includes("json")) {
-                const body = await r.json();
-                const items = body["hydra:member"] || [];
-                if (items.length === 0) {
-                  console.warn("[harness] model_metadatas preload returned 0 items — chart widgets will reject with METADATA_NOT_FOUND. Is your SOAR session authed?");
-                }
-                items.forEach((m) => {
-                  try { localStorage.setItem("cs.metadata." + m.type, JSON.stringify(m)); } catch (_) {}
-                });
-                window.__HARNESS_MMD_PRELOADED = items.length > 0;
-
-                // Preload per-module translations from /api/locale/1/<type>/en.json
-                // and merge into __HARNESS_TRANSLATIONS so module-scoped keys
-                // like ALERTS.FIELDS.FILEHASHES resolve via the translate filter.
-                window.__HARNESS_TRANSLATIONS = window.__HARNESS_TRANSLATIONS || {};
-                await Promise.all(items.map(async (m) => {
-                  try {
-                    const lr = await fetch("/api/locale/1/" + m.type + "/en.json", {
-                      credentials: "include",
-                      headers: { Accept: "application/json" },
-                    });
-                    const lct = lr.headers.get("content-type") || "";
-                    if (!lr.ok || !lct.includes("json")) return;
-                    const body = await lr.json();
-                    Object.assign(window.__HARNESS_TRANSLATIONS, body);
-                  } catch (_) {}
-                }));
-              } else {
-                console.warn("[harness] model_metadatas preload failed status=" + r.status + " content-type=" + ct + " — proxy likely returned the SPA shell. Check auth cookies / SOAR reachability.");
-              }
-            } catch (e) { console.warn("[harness] model_metadatas preload threw", e); }
-          }
+          // METADATA_NOT_FOUND if the entry isn't there. The `translate`
+          // filter resolves against window.__HARNESS_TRANSLATIONS — without
+          // those, edit-form labels show as raw keys.
+          //
+          // Both responses are large and rarely change between dev sessions,
+          // so we cache them in localStorage with a TTL and use a
+          // stale-while-revalidate pattern: hydrate from cache synchronously
+          // (fast first paint), then refresh in the background.
+          await preloadSoarMetadata();
 
           const wrap = document.createElement("div");
           wrap.setAttribute("ng-controller", ctrlName);
@@ -1723,12 +2031,25 @@
               if (raw) saved = JSON.parse(raw);
             } catch (_) {}
             window.__HARNESS_CONFIG = HU.mergeConfig(window.__HARNESS_CONFIG, saved);
+            window.__HARNESS_WIDGET = { name: current.name, version: current.version };
+            // Ensure SOAR's static + module locales are merged into
+            // __HARNESS_TRANSLATIONS — covers COMPONENTS.FILTER.* and friends
+            // pulled in by directives like cs-conditional. Idempotent.
+            await preloadSoarMetadata();
+            await loadWidgetTranslations(current);
 
+            // Fetch + inline edit.html directly (instead of ng-include). The
+            // extra scope ng-include introduces breaks two-way `=ngModel`
+            // writes from directives like cs-conditional onto `$parent.config.*`
+            // — SOAR mounts the template right inside the controller scope, so
+            // the harness needs to too. The first fetch warms the harness's
+            // static cache; subsequent opens hit the express.static layer.
+            const editHtmlRes = await fetch("/" + current.id + "/edit.html");
+            if (!editHtmlRes.ok) throw new Error("edit.html " + editHtmlRes.status);
+            const editHtml = await editHtmlRes.text();
             const editWrap = document.createElement("div");
             editWrap.setAttribute("ng-controller", editCtrlName);
-            const inc = document.createElement("div");
-            inc.setAttribute("ng-include", "'/" + current.id + "/edit.html'");
-            editWrap.appendChild(inc);
+            editWrap.innerHTML = editHtml;
             while (modalBody.firstChild) modalBody.removeChild(modalBody.firstChild);
             modalBody.appendChild(editWrap);
             editInjector = angular.bootstrap(editWrap, ["cybersponse"]);
@@ -1818,6 +2139,19 @@
           console.warn("[harness] SSE unavailable:", e && e.message);
         }
         if (window.__harnessHydrateProxy) window.__harnessHydrateProxy();
+
+        // Drawer close button — hides the drawer overlay so the records grid
+        // (and any controls it covers) are reachable again. Re-show by
+        // changing context away from drawer and back, or by reselecting a
+        // widget.
+        document.getElementById("harness-drawer-close").addEventListener("click", () => {
+          frame.classList.add("drawer-hidden");
+        });
+        document.getElementById("harness-drawer-open").addEventListener("click", () => {
+          frame.classList.remove("drawer-hidden");
+        });
+        ctxSel.addEventListener("change", () => frame.classList.remove("drawer-hidden"));
+        widgetSelect.addEventListener("change", () => frame.classList.remove("drawer-hidden"));
 
         // Re-mount when the user changes context or record without reloading.
         ctxSel.addEventListener("change", () => mountWidget().catch(console.error));

@@ -7,7 +7,15 @@
     "start": "node server.js",
     "test": "jest",
     "test:e2e": "playwright test",
-    "test:e2e:headed": "playwright test --headed"
+    "test:e2e:headed": "playwright test --headed",
+    "lint:testids": "node scripts/lint-testids.js fsrPlaybookBuilder",
+    "lint:testids:all": "node scripts/lint-testids.js",
+    "lint:angular": "node scripts/lint-angular.js fsrPlaybookBuilder",
+    "lint:angular:all": "node scripts/lint-angular.js",
+    "lint": "npm run lint:testids && npm run lint:angular",
+    "widget": "node scripts/widget.js",
+    "ship": "node scripts/widget.js ship",
+    "verify-remote": "node scripts/widget.js verify-remote"
   },
   "dependencies": {
     "dotenv": "^16.4.5",
