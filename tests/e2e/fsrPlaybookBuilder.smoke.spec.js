@@ -1,8 +1,15 @@
 'use strict';
 const { test, expect } = require('@playwright/test');
 
-const WIDGET_ID = 'fsrPlaybookBuilder-1.0.0';
-const WIDGET_URL = `/?widget=${WIDGET_ID}&context=Dashboard&mock=happy_path`;
+const { resolveWidgetId, DEFAULT_ID } = require('./_widgetId');
+
+// Resolved at runtime so the suite survives widget version bumps.
+let WIDGET_ID = DEFAULT_ID;
+let WIDGET_URL = `/?widget=${WIDGET_ID}&context=Dashboard&mock=happy_path`;
+test.beforeAll(async ({ request }) => {
+  WIDGET_ID = await resolveWidgetId(request);
+  WIDGET_URL = `/?widget=${WIDGET_ID}&context=Dashboard&mock=happy_path`;
+});
 
 function urlFor(scenario) {
   return `/?widget=${WIDGET_ID}&context=Dashboard&mock=${scenario}`;

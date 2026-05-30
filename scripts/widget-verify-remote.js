@@ -13,6 +13,38 @@ const path = require("path");
 const fs = require("fs");
 const { chromium } = require("@playwright/test");
 
+// Resolve the most-recent alert's UUID via the SOAR REST API. Authenticates
+// with the same loginid/password used for the UI, then pulls one alert ordered
+// by newest. Returns the bare UUID, or null if none/auth failed.
+async function pickRecentAlertId(ctx, host, user, pass, log) {
+  try {
+    const authResp = await ctx.request.post(`${host}/auth/authenticate`, {
+      headers: { "Content-Type": "application/json" },
+      data: { credentials: { loginid: user, password: pass } },
+      timeout: 20000,
+    });
+    if (!authResp.ok()) { log(`  auth ${authResp.status()} — cannot query alerts`); return null; }
+    const token = (await authResp.json()).token;
+    if (!token) { log("  auth returned no token"); return null; }
+
+    const listResp = await ctx.request.get(
+      `${host}/api/3/alerts?$limit=1&$orderby=-createDate`,
+      { headers: { Authorization: `Bearer ${token}` }, timeout: 20000 }
+    );
+    if (!listResp.ok()) { log(`  alerts query ${listResp.status()}`); return null; }
+    const body = await listResp.json();
+    const members = body["hydra:member"] || body.member || [];
+    const iri = members[0] && members[0]["@id"];
+    if (!iri) return null;
+    const m = iri.match(/([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})/i);
+    if (m) log(`  picked alert ${iri}`);
+    return m ? m[1] : null;
+  } catch (e) {
+    log(`  alert lookup failed: ${e.message}`);
+    return null;
+  }
+}
+
 async function run(opts) {
   const {
     host, user, pass, alert, widgetDir, widgetName, widgetId, outDir,
@@ -88,14 +120,14 @@ async function run(opts) {
         alertUrl += sep + "mock=" + encodeURIComponent(mockScenario);
       }
     } else {
-      // Find any alert. Best-effort: hit the list page, click the first row.
-      log("→ no --alert given; navigating alert list to pick first");
-      await page.goto(`${host}/modules/main/alerts`, { waitUntil: "domcontentloaded", timeout: 30000 });
-      await page.waitForTimeout(3000);
-      const firstAlert = await page.$('a[href*="/view-panel/alerts/"]');
-      if (!firstAlert) throw new Error("no alert link found on /modules/main/alerts");
-      alertUrl = await firstAlert.getAttribute("href");
-      if (!alertUrl.startsWith("http")) alertUrl = host + alertUrl;
+      // No --alert given: ask the API for the most recent alert. This is far
+      // more reliable than scraping the list DOM (which depends on the grid
+      // having rendered and a stable anchor selector). Uses the same creds as
+      // the UI login; ctx.request inherits the context's ignoreHTTPSErrors.
+      log("→ no --alert given; querying API for the most recent alert");
+      const alertId = await pickRecentAlertId(ctx, host, user, pass, log);
+      if (!alertId) throw new Error("API returned no alerts to verify against");
+      alertUrl = `${host}/modules/view-panel/alerts/${alertId}`;
     }
     log(`→ alert ${alertUrl}`);
     await page.goto(alertUrl, { waitUntil: "domcontentloaded", timeout: 45000 });

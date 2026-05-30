@@ -10,8 +10,11 @@
 // All scenarios append &fastmock=1 so fixture delays collapse to ~30ms.
 
 const { test, expect } = require('@playwright/test');
+const { resolveWidgetId, DEFAULT_ID } = require('./_widgetId');
 
-const WIDGET_ID = 'fsrPlaybookBuilder-1.0.0';
+// Resolved at runtime so the suite survives widget version bumps.
+let WIDGET_ID = DEFAULT_ID;
+test.beforeAll(async ({ request }) => { WIDGET_ID = await resolveWidgetId(request); });
 
 const SAMPLE_INCIDENT = {
   '@id': '/api/3/incidents/11111111-2222-3333-4444-555555555555',

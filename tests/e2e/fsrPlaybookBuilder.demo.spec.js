@@ -7,8 +7,11 @@
 // All scenarios append &fastmock=1 so the mock collapses 1.5s demo delays to ~30ms.
 
 const { test, expect } = require('@playwright/test');
+const { resolveWidgetId, DEFAULT_ID } = require('./_widgetId');
 
-const WIDGET_ID = 'fsrPlaybookBuilder-1.0.0';
+// Resolved at runtime so the suite survives widget version bumps.
+let WIDGET_ID = DEFAULT_ID;
+test.beforeAll(async ({ request }) => { WIDGET_ID = await resolveWidgetId(request); });
 
 function urlFor(scenario) {
   // opener=1 makes the widget fire the seeded chat_turn on load (no paste needed).
@@ -243,10 +246,10 @@ test.describe('Connector combobox search', () => {
     await expect(page.locator('[data-testid="settings-overlay"]')).toHaveCount(0);
 
     // localStorage now holds the persisted config under the harness key.
-    const stored = await page.evaluate(() => {
-      const raw = localStorage.getItem('harness:config:fsrPlaybookBuilder-1.0.0');
+    const stored = await page.evaluate((id) => {
+      const raw = localStorage.getItem('harness:config:' + id);
       return raw ? JSON.parse(raw) : null;
-    });
+    }, WIDGET_ID);
     expect(stored).not.toBeNull();
     expect(stored.connectorName).toBe('fortinet-fsr-playbook-builder');
     expect(stored.connectorVersion).toBe('1.0.0');
