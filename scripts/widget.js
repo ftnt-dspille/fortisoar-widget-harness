@@ -7,7 +7,7 @@
 //
 // Talks to the running harness on $HARNESS_URL (default http://localhost:14400)
 // for packaging + install — the harness already implements that and owns the
-// SOAR credentials. verify-remote drives Playwright against $FORTISOAR_HOST
+// SOAR credentials. verify-remote drives Playwright against $FSR_BASE_URL
 // using the username/password in .env.
 
 "use strict";
@@ -16,10 +16,9 @@ require("dotenv").config();
 const path = require("path");
 const fs = require("fs");
 
+const { resolveSoarEnv } = require("../lib/soarEnv");
 const HARNESS_URL = process.env.HARNESS_URL || "http://localhost:14400";
-const FSR_HOST = process.env.FORTISOAR_HOST;
-const FSR_USER = process.env.FORTISOAR_USERNAME;
-const FSR_PASS = process.env.FORTISOAR_PASSWORD;
+const { host: FSR_HOST, user: FSR_USER, pass: FSR_PASS } = resolveSoarEnv();
 
 // ─── arg parsing ──────────────────────────────────────────────────────────
 const [, , cmd, idArg, ...rest] = process.argv;
@@ -135,7 +134,7 @@ async function cmdPack() {
 
 async function cmdPush() {
   await ensureHarness();
-  if (!FSR_HOST) die("FORTISOAR_HOST not set in .env");
+  if (!FSR_HOST) die("FSR_BASE_URL not set in .env");
   const payload = {};
   if (flags.bump) payload.bump = flags.bump;
   if (flags.version) payload.version = flags.version;
@@ -151,7 +150,7 @@ async function cmdPush() {
 
 async function cmdVerifyRemote() {
   if (!FSR_HOST || !FSR_USER || !FSR_PASS) {
-    die("FORTISOAR_HOST/USERNAME/PASSWORD must be set in .env for verify-remote");
+    die("FSR_BASE_URL/FSR_USERNAME/FSR_PASSWORD must be set in .env for verify-remote");
   }
   // Re-read info in case push just bumped.
   const fresh = JSON.parse(fs.readFileSync(path.join(widgetDir, "info.json"), "utf8"));
@@ -163,7 +162,7 @@ async function cmdVerifyRemote() {
     host: FSR_HOST,
     user: FSR_USER,
     pass: FSR_PASS,
-    alert: flags.alert || process.env.FORTISOAR_PROBE_ALERT_IRI || null,
+    alert: flags.alert || process.env.FSR_PROBE_ALERT_IRI || process.env.FORTISOAR_PROBE_ALERT_IRI || null,
     mock: flags.mock || null,
     widgetDir,
     widgetName: fresh.name,

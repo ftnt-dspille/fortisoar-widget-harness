@@ -39,6 +39,12 @@ const BENIGN_CONSOLE_PATTERNS = [
   // etc.) that we don't proxy in the dev harness. They're irrelevant to
   // widget functionality and DNS-fail in CI environments without internet.
   /ERR_NAME_NOT_RESOLVED/,
+  // Contract drift tests intentionally load a fixture whose contract_version
+  // is a MAJOR bump ahead of the widget's WIDGET_CONTRACT_VERSION. The widget
+  // correctly logs console.error("[fsrPlaybookBuilder] Connector contract …
+  // MAJOR mismatch") — that IS the behavior under test. The tests verify the
+  // banner/error-state via DOM assertions, not console output.
+  /\[fsrPlaybookBuilder\].*contract.*mismatch/i,
 ];
 
 function attachConsoleCapture(page, sink) {

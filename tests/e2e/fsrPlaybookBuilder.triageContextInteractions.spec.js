@@ -9,10 +9,6 @@
 
 const { test, expect } = require('@playwright/test');
 
-const DEV_HARNESS_URL = 'http://localhost:4401';
-
-// Resolve the installed widget id at runtime so the suite survives version
-// bumps (the harness serves whatever version is packaged, e.g. -1.0.28).
 const { resolveWidgetId, DEFAULT_ID } = require('./_widgetId');
 let WIDGET_ID = DEFAULT_ID;
 test.beforeAll(async ({ request }) => { WIDGET_ID = await resolveWidgetId(request); });
@@ -28,7 +24,7 @@ const SAMPLE_INCIDENT = {
 
 function urlFor(scenario, extra) {
   const mockParam = scenario ? `&mock=${scenario}` : '';
-  return `${DEV_HARNESS_URL}/?widget=${WIDGET_ID}&context=Dashboard${mockParam}&fastmock=1${extra || ''}`;
+  return `/?widget=${WIDGET_ID}&context=Dashboard${mockParam}&fastmock=1${extra || ''}`;
 }
 
 async function boot(page, scenario, opts) {
@@ -69,7 +65,7 @@ async function boot(page, scenario, opts) {
   // Wait for the widget to be ready and test probe available.
   await page.waitForFunction(
     () => window.__fsrPlaybookBuilder__ && typeof window.__fsrPlaybookBuilder__.state === 'string',
-    null, { timeout: 15000 }
+    null, { timeout: 25000 }
   );
 
   // Settle any auto-seed / opener turn so callers see a stable idle state
@@ -154,7 +150,11 @@ test.describe('Triage context interactions (Phase F)', () => {
 
       // Click and let the turn run.
       await iocsCard.click();
-      await page.waitForTimeout(500); // Let Angular digest and turn start.
+      // Wait for the turn to start: messageCount must increase beyond its pre-click value.
+      await page.waitForFunction(
+        (prev) => window.__fsrPlaybookBuilder__.messageCount > prev,
+        msgCount, { timeout: 5000 }
+      );
 
       // After click: messageCount increased.
       msgCount = await page.evaluate(() => window.__fsrPlaybookBuilder__.messageCount);
@@ -195,8 +195,11 @@ test.describe('Triage context interactions (Phase F)', () => {
       await composer.fill('What happened here?');
       await composer.press('Enter');
 
-      // Wait for the turn to run.
-      await page.waitForTimeout(1000);
+      // Wait for the widget to collapse the quick-actions grid (state-driven).
+      await page.waitForFunction(
+        () => window.__fsrPlaybookBuilder__.showQuickActions === false,
+        null, { timeout: 5000 }
+      );
 
       // showQuickActions() should now return false.
       const showQA = await page.evaluate(() => window.__fsrPlaybookBuilder__.showQuickActions);

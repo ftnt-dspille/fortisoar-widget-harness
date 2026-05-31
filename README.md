@@ -54,7 +54,7 @@ widgets-src/       # default discovery root if WIDGETS_SRC isn't set
 ```bash
 pnpm install              # or npm install
 cp .env.example .env
-# fill in FORTISOAR_HOST / FORTISOAR_USERNAME / FORTISOAR_PASSWORD
+# fill in FSR_BASE_URL / FSR_USERNAME / FSR_PASSWORD
 # optionally: WIDGETS_SRC=/abs/path/containing/widget-repos
 pnpm start                # http://localhost:4400
 ```
@@ -82,7 +82,7 @@ of unrelated repos is safe.
 
 ```bash
 pnpm test            # jest: harness + every discovered widget's tests
-pnpm test:e2e        # playwright (requires a reachable FORTISOAR_HOST)
+pnpm test:e2e        # playwright (requires a reachable FSR_BASE_URL)
 ```
 
 The Jest config uses `projects:` to fan out — the harness's own suites run

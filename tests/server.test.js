@@ -1,9 +1,9 @@
 "use strict";
 
 // Set stub env vars before loading server so it doesn't call process.exit(1).
-process.env.FORTISOAR_HOST = "https://soar.test.invalid";
-process.env.FORTISOAR_USERNAME = "admin";
-process.env.FORTISOAR_PASSWORD = "testpass";
+process.env.FSR_BASE_URL = "https://soar.test.invalid";
+process.env.FSR_USERNAME = "admin";
+process.env.FSR_PASSWORD = "testpass";
 
 const request = require("supertest");
 const { app, isLocalPath, discoverWidgets, decodeJwtExpiryMs } = require("../server");

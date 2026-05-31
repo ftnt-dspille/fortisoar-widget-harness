@@ -1,5 +1,5 @@
 "use strict";
-// Load .env at config-time so FORTISOAR_HOST/USERNAME/PASSWORD/WIDGETS_SRC
+// Load .env at config-time so FSR_BASE_URL/FSR_USERNAME/FSR_PASSWORD/WIDGETS_SRC
 // can come from the same .env file the dev server uses. Tests that mock
 // /api/3 routes still pass with stub creds; tests that hit real SOAR will
 // use the credentials from .env if present.
@@ -15,14 +15,10 @@ module.exports = defineConfig({
     "fortisoar-widget-harness/tests/e2e/**/*.spec.js",
     "widgets-src/*/tests/e2e/**/*.spec.js",
   ],
-  timeout: 60000,
-  // One retry covers genuine timing-flake (ng-repeat re-renders mid-click,
-  // digest-queue pileups under serial load) without masking real failures
-  // — a real bug fails twice. trace:'on-first-retry' below means the retry
-  // produces a full trace artifact for diagnosis when something does flake
-  // repeatedly.
-  retries: 1,
-  workers: process.env.CI ? 2 : 4,
+  timeout: 45000,
+  expect: { timeout: 10000 },
+  retries: process.env.CI ? 1 : 0,
+  workers: 2,
   fullyParallel: true,
   reporter: "list",
   // Tests run against a dedicated harness on port 14401 so they never collide
@@ -46,9 +42,9 @@ module.exports = defineConfig({
     reuseExistingServer: true,
     timeout: 60000,
     env: {
-      FORTISOAR_HOST: process.env.FORTISOAR_HOST || "https://soar.test.invalid",
-      FORTISOAR_USERNAME: process.env.FORTISOAR_USERNAME || "admin",
-      FORTISOAR_PASSWORD: process.env.FORTISOAR_PASSWORD || "test",
+      FSR_BASE_URL: process.env.FSR_BASE_URL || process.env.FORTISOAR_HOST || "https://soar.test.invalid",
+      FSR_USERNAME: process.env.FSR_USERNAME || process.env.FORTISOAR_USERNAME || "admin",
+      FSR_PASSWORD: process.env.FSR_PASSWORD || process.env.FORTISOAR_PASSWORD || "test",
       WIDGETS_SRC: process.env.WIDGETS_SRC || "",
       PORT: "14401",
     },

@@ -1,9 +1,9 @@
 /* Local widget dev server.
    - Auto-discovers widgets in widgets-src/<repo>/widget/  (each must contain info.json)
    - Serves the harness page at /
-   - Authenticates to FORTISOAR_HOST, caches the JWT, re-auths on 401
+   - Authenticates to FSR_BASE_URL, caches the JWT, re-auths on 401
    - Exposes /_fsr/widgets and /_fsr/stylesheets for the harness bootstrap
-   - Proxies everything else (assets + APIs) to FORTISOAR_HOST */
+   - Proxies everything else (assets + APIs) to FSR_BASE_URL */
 "use strict";
 
 require("dotenv").config();
@@ -32,9 +32,8 @@ const {
 // Default port intentionally non-common so dev sessions don't collide with
 // the 3000/4000/4400/8080 buckets that other tools grab. Override with PORT=.
 const PORT = Number(process.env.PORT || 14400);
-const HOST = process.env.FORTISOAR_HOST;
-const USER = process.env.FORTISOAR_USERNAME;
-const PASS = process.env.FORTISOAR_PASSWORD;
+const { resolveSoarEnv } = require("./lib/soarEnv");
+const { host: HOST, user: USER, pass: PASS } = resolveSoarEnv();
 let PROXY_VERBOSE = process.env.PROXY_VERBOSE === "1";
 
 const HARNESS_MODULE_PATH = path.resolve(__dirname, "harness.module.js");
@@ -1685,8 +1684,8 @@ app.use(proxy);
 if (require.main === module) {
   if (!HOST || !USER || !PASS) {
     console.error(
-      "Missing FORTISOAR_HOST / FORTISOAR_USERNAME / FORTISOAR_PASSWORD. " +
-        "Copy .env.example to dev/.env and fill it in."
+      "Missing FSR_BASE_URL / FSR_USERNAME / FSR_PASSWORD. " +
+        "Copy .env.example to .env and fill it in."
     );
     process.exit(1);
   }

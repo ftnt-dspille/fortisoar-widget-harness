@@ -4,10 +4,9 @@
 // Run from the harness dir:  node tests/live/_discover-wire.js
 require("dotenv").config();
 const { chromium } = require("@playwright/test");
-const HOST = process.env.FORTISOAR_HOST;
-const USER = process.env.FORTISOAR_USERNAME;
-const PASS = process.env.FORTISOAR_PASSWORD;
-const ALERT = process.env.FORTISOAR_PROBE_ALERT_IRI || "db7afbf7-56c8-4706-87b9-9a8ce2332d05";
+const { resolveSoarEnv } = require("../../lib/soarEnv");
+const { host: HOST, user: USER, pass: PASS } = resolveSoarEnv();
+const ALERT = process.env.FSR_PROBE_ALERT_IRI || process.env.FORTISOAR_PROBE_ALERT_IRI || "db7afbf7-56c8-4706-87b9-9a8ce2332d05";
 
 (async () => {
   const browser = await chromium.launch({ headless: true });

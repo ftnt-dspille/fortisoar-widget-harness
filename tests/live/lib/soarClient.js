@@ -1,7 +1,7 @@
 // Standalone SOAR client for live connector-integration tests.
 //
 // Deliberately does NOT depend on the running harness proxy — it authenticates
-// to FORTISOAR_HOST directly with .env creds so the live suite is portable to
+// to FSR_BASE_URL directly with .env creds so the live suite is portable to
 // CI. Mirrors the wire the widget uses: POST /api/integration/execute/ with
 // {connector, version, config, operation, params}; the connector's response
 // envelope is returned under `.data`.
@@ -84,9 +84,13 @@ async function withRetry(fn, { attempts = 3, label = "op" } = {}) {
 }
 
 async function makeClient() {
-  const host = env("FORTISOAR_HOST").replace(/\/+$/, "");
-  const user = env("FORTISOAR_USERNAME");
-  const pass = env("FORTISOAR_PASSWORD");
+  const { resolveSoarEnv } = require("../../../lib/soarEnv");
+  const soar = resolveSoarEnv();
+  if (!soar.host) throw new Error("missing FSR_BASE_URL (set it in .env for live tests)");
+  if (!soar.user || !soar.pass) throw new Error("missing FSR_USERNAME/FSR_PASSWORD (set them in .env for live tests)");
+  const host = soar.host.replace(/\/+$/, "");
+  const user = soar.user;
+  const pass = soar.pass;
 
   // ── authenticate ─────────────────────────────────────────────────────
   const auth = await withRetry(

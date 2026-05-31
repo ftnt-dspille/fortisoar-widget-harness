@@ -3,7 +3,7 @@
 //
 //   FSRPB_LIVE=1 npm run test:live
 //
-// Requires FORTISOAR_HOST / USERNAME / PASSWORD in .env (the live demo SOAR).
+// Requires FSR_BASE_URL / FSR_USERNAME / FSR_PASSWORD in .env (the live demo SOAR).
 // CI-shaped: long timeout for real exec/LLM calls, JUnit output when the
 // jest-junit reporter is available (optional dep; falls back to default).
 "use strict";
