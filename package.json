@@ -13,7 +13,9 @@
     "lint:testids:all": "node scripts/lint-testids.js",
     "lint:angular": "node scripts/lint-angular.js fsrPlaybookBuilder",
     "lint:angular:all": "node scripts/lint-angular.js",
-    "lint": "npm run lint:testids && npm run lint:angular",
+    "lint:js": "cd .. && find widgets-src -name '*.js' ! -name '*.min.js' -not -path '*/node_modules/*' -not -path '*/lib/*' -not -path '*/vendor/*' -print0 | xargs -0 oxlint -c widgets-src/.oxlintrc.json",
+    "lint:eslint": "eslint --resolve-plugins-relative-to . --ext .js ../widgets-src",
+    "lint": "npm run lint:js && npm run lint:eslint && npm run lint:testids && npm run lint:angular",
     "widget": "node scripts/widget.js",
     "ship": "node scripts/widget.js ship",
     "verify-remote": "node scripts/widget.js verify-remote"
@@ -27,8 +29,11 @@
     "@playwright/test": "^1.44.0",
     "angular": "1.8",
     "angular-mocks": "1.8",
+    "eslint": "^8.57.1",
+    "eslint-plugin-angular": "^4.1.0",
     "jest": "^29.7.0",
     "jest-environment-jsdom": "^29.7.0",
+    "oxlint": "^1.0.0",
     "supertest": "^7.0.0"
   },
   "license": "MIT"

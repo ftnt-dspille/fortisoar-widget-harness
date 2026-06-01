@@ -139,13 +139,20 @@ async function cmdPush() {
   if (flags.bump) payload.bump = flags.bump;
   if (flags.version) payload.version = flags.version;
   if (flags["skip-lint"]) payload.skipLint = true;
-  info_(`pushing ${widgetId} → ${FSR_HOST}`);
+  // widgetId carries info.json's CURRENT version, but the server bumps it
+  // (when --bump/--version is set) before packaging — so don't print a version
+  // here that's about to change. Report the actual installed version, which
+  // the install response echoes back, in the success line below.
+  const bumpNote = flags.version ? ` → v${flags.version}`
+    : flags.bump ? ` (--bump ${flags.bump})` : "";
+  info_(`pushing ${info.name}${bumpNote} → ${FSR_HOST}`);
   const r = await http(`${HARNESS_URL}/_fsr/install/${widgetId}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
   }, JSON.stringify(payload));
   if (r.status >= 400) die(`push failed (${r.status}): ${r.text.slice(0, 800)}`);
-  ok(`installed on SOAR (uuid=${r.json && r.json.uuid})`);
+  const installed = (r.json && r.json.version) ? `${info.name}-${r.json.version}` : widgetId;
+  ok(`installed on SOAR: ${installed} (uuid=${r.json && r.json.uuid})`);
 }
 
 async function cmdVerifyRemote() {
