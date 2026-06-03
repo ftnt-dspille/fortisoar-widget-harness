@@ -5,6 +5,7 @@
 //   - infoCards: info_cards fixture renders all card variants without errors
 
 const { test, expect } = require('@playwright/test');
+const { waitForWidgetIdle } = require('./_waitForWidgetIdle');
 const { resolveWidgetId, DEFAULT_ID } = require('./_widgetId');
 
 let WIDGET_ID = DEFAULT_ID;
@@ -35,7 +36,7 @@ test('alert: jinja stripped, badge shows real severity not ERROR', async ({ page
     window.__fsrPbEntity__ = entity;
   }, { id: WIDGET_ID, entity: ALERT });
   await page.goto(`/?widget=${WIDGET_ID}&context=Dashboard&mock=incident_smtp_intrusion&fastmock=1`, { waitUntil: 'domcontentloaded' });
-  await page.waitForFunction(() => window.__fsrPlaybookBuilder__ && window.__fsrPlaybookBuilder__.state === 'idle', null, { timeout: 15000 });
+  await waitForWidgetIdle(page, '__fsrPlaybookBuilder__');
 
   const card = page.locator('[data-testid="info-card-entity-777"]');
   await expect(card).toBeVisible();
@@ -80,7 +81,7 @@ test('detail-view entity seed renders as a structured card; build toggle round-t
     window.__fsrPbEntity__ = entity;
   }, { id: WIDGET_ID, entity: INCIDENT_DETAIL });
   await page.goto(`/?widget=${WIDGET_ID}&context=Dashboard&mock=incident_smtp_intrusion&fastmock=1`, { waitUntil: 'domcontentloaded' });
-  await page.waitForFunction(() => window.__fsrPlaybookBuilder__ && window.__fsrPlaybookBuilder__.state === 'idle', null, { timeout: 15000 });
+  await waitForWidgetIdle(page, '__fsrPlaybookBuilder__');
 
   const card = page.locator('[data-testid="info-card-entity-558"]');
   await expect(card).toBeVisible();
@@ -116,14 +117,24 @@ test('info_cards fixture renders all card kinds without errors', async ({ page }
     localStorage.removeItem('fsrPbSession');
   }, WIDGET_ID);
   await page.goto(`/?widget=${WIDGET_ID}&context=Dashboard&mock=info_cards&fastmock=1&opener=1`, { waitUntil: 'domcontentloaded' });
-  await page.waitForFunction(() => window.__fsrPlaybookBuilder__ && window.__fsrPlaybookBuilder__.state === 'idle', null, { timeout: 15000 });
+  await waitForWidgetIdle(page, '__fsrPlaybookBuilder__');
 
+  // Backend pre-flight activity trail (contract 2.8.0) coalesces into one
+  // block of bulleted phase lines, rendered ahead of the cards.
+  await expect(page.locator('.pb-activity').first()).toBeVisible();
+  await expect(page.locator('.pb-activity .pb-activity-line')).toHaveCount(3);
+  await expect(page.locator('.pb-activity')).toContainText('Classified as C2/exfil');
   await expect(page.locator('[data-testid="info-card-status-splunk"]')).toBeVisible();
   await expect(page.locator('[data-testid="info-card-status-fortigate"]')).toBeVisible();
   await expect(page.locator('[data-testid="info-card-ioc-1234"]')).toBeVisible();
   await expect(page.locator('[data-testid="info-card-ioc-1234"] .status-score')).toBeVisible();
   await expect(page.locator('[data-testid="info-card-ioc-1234"] .status-tag').first()).toBeVisible();
   await expect(page.locator('[data-testid="info-card-ioc-1234"] .status-table')).toBeVisible();
+  // playbook_pushed card renders the designer deep link as a real anchor.
+  const pbLink = page.locator('[data-testid="info-card-pushed-offer1"] .status-link a');
+  await expect(pbLink).toBeVisible();
+  await expect(pbLink).toHaveAttribute('href', '/playbooks/wf-uuid-1');
+  await expect(pbLink).toHaveAttribute('target', '_blank');
   await page.screenshot({ path: '/tmp/info_cards.png', fullPage: true });
   expect(errors, 'no console/page errors: ' + errors.join(' | ')).toEqual([]);
 });
