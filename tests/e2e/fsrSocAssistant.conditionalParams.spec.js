@@ -36,7 +36,7 @@ async function boot(page) {
   await page.goto(`/?widget=${WIDGET_ID}&context=Dashboard&mock=conditional_block_ip&fastmock=1&opener=1`,
     { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(
-    () => window.__fsrPlaybookBuilder__ && typeof window.__fsrPlaybookBuilder__.state === 'string',
+    () => window.__fsrSocAssistant__ && typeof window.__fsrSocAssistant__.state === 'string',
     null, { timeout: 15000 });
   await page.locator(`[data-testid="action-card-${CARD}"]`).waitFor({ state: 'visible', timeout: 8000 });
   return errors;

@@ -12,8 +12,12 @@ pnpm-debug.log*
 # Build / runtime output
 widget-packages/
 dev/cache/
-widgets-src/*
-!widgets-src/.gitkeep
+*.pid
+
+# widgets-src is a local-only discovery root: in the monorepo it's a symlink to
+# the sibling widgets repo; in a clone it's absent (the harness falls back to the
+# committed examples/). Never track it — a tracked symlink dangles on clone.
+/widgets-src
 
 # OS
 .DS_Store

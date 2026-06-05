@@ -379,9 +379,35 @@ function invalidateToken() {
 }
 
 // Widget discovery
-const WIDGETS_SRC = process.env.WIDGETS_SRC
-  ? path.resolve(process.env.WIDGETS_SRC)
-  : path.resolve(__dirname, "widgets-src");
+// Discovery roots — the harness MOUNTS widgets from every root that exists, so
+// the bundled examples/ widgets are renderable in the monorepo (next to
+// widgets-src) AND in a fresh clone (where widgets-src is absent). When a folder
+// name appears in more than one root, the earlier root wins (widgets-src over
+// examples). An explicit WIDGETS_SRC env replaces the defaults entirely.
+function resolveWidgetRoots() {
+  const roots = [];
+  if (process.env.WIDGETS_SRC) {
+    roots.push(path.resolve(process.env.WIDGETS_SRC));
+  } else {
+    const local = path.resolve(__dirname, "widgets-src"); // false for a dangling symlink
+    if (fs.existsSync(local)) roots.push(local);
+  }
+  // The harness's own bundled examples/ are ALWAYS mounted (for self-test and as
+  // a reference widget), regardless of where the user points WIDGETS_SRC — so
+  // `npm test` / `npm run test:e2e` work fully locally even when .env pins a root.
+  const examples = path.resolve(__dirname, "examples");
+  if (fs.existsSync(examples)) roots.push(examples);
+  // De-dupe (e.g. WIDGETS_SRC explicitly set to examples) and drop missing.
+  return [...new Set(roots)].filter((p) => fs.existsSync(p));
+}
+const WIDGET_ROOTS = resolveWidgetRoots();
+
+// Single WRITABLE root for imports/uploads (where `pull` drops new widgets).
+// Prefer a real widgets-src; fall back to examples only if that's all we have.
+const WIDGETS_SRC =
+  WIDGET_ROOTS.find((p) => path.basename(p) === "widgets-src") ||
+  WIDGET_ROOTS[0] ||
+  path.resolve(__dirname, "widgets-src");
 
 // Files we scan for stale `<name>-<version>` references. The widget templates
 // frequently embed versioned paths (e.g. <link href="<name>-1.1.3/...">) that
@@ -418,8 +444,8 @@ function scanStaleVersionRefs(widgetDir, name, version) {
 // Build a widget record for a single widgets-src/<folder>/widget directory.
 // Returns null if info.json is missing/invalid; caller decides whether to skip
 // or surface an error.
-function buildWidgetRecord(folder) {
-  const widgetDir = path.join(WIDGETS_SRC, folder, "widget");
+function buildWidgetRecord(folder, root) {
+  const widgetDir = path.join(root || WIDGETS_SRC, folder, "widget");
   const infoPath = path.join(widgetDir, "info.json");
   if (!fs.existsSync(infoPath)) return null;
   let info;
@@ -480,16 +506,18 @@ function scanAssetScripts(widgetDir) {
 }
 
 function discoverWidgets() {
-  if (!fs.existsSync(WIDGETS_SRC)) {
-    console.warn(`widgets-src/ not found at ${WIDGETS_SRC}`);
+  if (WIDGET_ROOTS.length === 0) {
+    console.warn(`no widget roots found (looked for widgets-src/ and examples/)`);
     return [];
   }
-  const entries = fs.readdirSync(WIDGETS_SRC, { withFileTypes: true });
   const out = [];
-  for (const e of entries) {
-    if (!e.isDirectory()) continue;
-    const rec = buildWidgetRecord(e.name);
-    if (rec) out.push(rec);
+  const seenFolders = new Set(); // first root wins on a folder-name collision
+  for (const root of WIDGET_ROOTS) {
+    for (const e of fs.readdirSync(root, { withFileTypes: true })) {
+      if (!e.isDirectory() || seenFolders.has(e.name)) continue;
+      const rec = buildWidgetRecord(e.name, root);
+      if (rec) { out.push(rec); seenFolders.add(e.name); }
+    }
   }
   return out;
 }

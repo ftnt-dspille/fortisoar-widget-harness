@@ -1,5 +1,5 @@
 'use strict';
-// Resolve the installed fsrPlaybookBuilder widget id from the running harness,
+// Resolve the installed fsrSocAssistant widget id from the running harness,
 // so e2e specs survive version bumps instead of hard-coding e.g. -1.0.0.
 // Usage in a spec:
 //   const { resolveWidgetId, DEFAULT_ID } = require('./_widgetId');
@@ -7,10 +7,10 @@
 //   test.beforeAll(async ({ request }) => { WIDGET_ID = await resolveWidgetId(request); });
 
 const HARNESS = 'http://localhost:14401';
-const DEFAULT_ID = 'fsrPlaybookBuilder-1.0.29';
+const DEFAULT_ID = 'fsrSocAssistant-1.0.29';
 
 async function resolveWidgetId(request, name) {
-  name = name || 'fsrPlaybookBuilder';
+  name = name || 'fsrSocAssistant';
   try {
     const resp = await request.get(`${HARNESS}/_fsr/widgets`);
     const data = await resp.json();

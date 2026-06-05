@@ -41,10 +41,10 @@ const BENIGN_CONSOLE_PATTERNS = [
   /ERR_NAME_NOT_RESOLVED/,
   // Contract drift tests intentionally load a fixture whose contract_version
   // is a MAJOR bump ahead of the widget's WIDGET_CONTRACT_VERSION. The widget
-  // correctly logs console.error("[fsrPlaybookBuilder] Connector contract …
+  // correctly logs console.error("[fsrSocAssistant] Connector contract …
   // MAJOR mismatch") — that IS the behavior under test. The tests verify the
   // banner/error-state via DOM assertions, not console output.
-  /\[fsrPlaybookBuilder\].*contract.*mismatch/i,
+  /\[fsrSocAssistant\].*contract.*mismatch/i,
 ];
 
 function attachConsoleCapture(page, sink) {
@@ -136,8 +136,14 @@ test.afterEach(async ({ consoleErrors, page }, testInfo) => {
   }
 });
 
+// Re-exported from a side-effect-free module so specs using the vanilla
+// `@playwright/test` `test` can import it without pulling in this file's
+// afterEach hooks. See `_waitForWidgetIdle.js`.
+const { waitForWidgetIdle } = require("./_waitForWidgetIdle");
+
 module.exports = {
   test,
   expect: base.expect,
   BENIGN_CONSOLE_PATTERNS,
+  waitForWidgetIdle,
 };

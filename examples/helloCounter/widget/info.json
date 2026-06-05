@@ -1,0 +1,28 @@
+{
+  "name": "helloCounter",
+  "title": "Hello Counter",
+  "subTitle": "Minimal example widget — a configurable click counter. Use it as the starting point for your own widget.",
+  "version": "1.0.0",
+  "published_date": 1748908800,
+  "releaseNotes": "Example widget shipped with the harness to demonstrate the view/edit controller split, config persistence, jest unit tests, and the package/install flow.",
+  "development": true,
+  "metadata": {
+    "description": "Renders a counter starting at a configurable value. Clicking + / - adjusts it by the configured step. The label and starting value are set in the widget editor (edit.html) and persisted to the widget config.",
+    "publisher": "FortiSOAR Widget Harness",
+    "certified": "No",
+    "compatibility": [
+      "7.6.0"
+    ],
+    "snapshots": [],
+    "category": [
+      "Utilities"
+    ],
+    "pages": [
+      "Dashboard",
+      "View Panel"
+    ],
+    "standalone": false,
+    "windowClass": "Full Width",
+    "size": "lg"
+  }
+}

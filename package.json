@@ -5,18 +5,24 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
+    "dev": "node server.js",
     "test": "jest",
     "test:live": "jest -c jest.live.config.js",
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed",
+    "test:e2e:live": "E2E_LIVE=1 playwright test \"**/*[Ll]ive*.spec.js\"",
     "lint:testids": "node scripts/lint-testids.js fsrPlaybookBuilder",
     "lint:testids:all": "node scripts/lint-testids.js",
     "lint:angular": "node scripts/lint-angular.js fsrPlaybookBuilder",
     "lint:angular:all": "node scripts/lint-angular.js",
-    "lint:js": "cd .. && find widgets-src -name '*.js' ! -name '*.min.js' -not -path '*/node_modules/*' -not -path '*/lib/*' -not -path '*/vendor/*' -print0 | xargs -0 oxlint -c widgets-src/.oxlintrc.json",
-    "lint:eslint": "eslint --resolve-plugins-relative-to . --ext .js ../widgets-src",
+    "lint:js": "find -L $(for d in widgets-src examples; do [ -e \"$d\" ] && echo \"$d\"; done) -name '*.js' ! -name '*.min.js' -not -path '*/node_modules/*' -not -path '*/lib/*' -not -path '*/vendor/*' -print0 | xargs -0 -r oxlint -c .oxlintrc.json",
+    "lint:eslint": "eslint --resolve-plugins-relative-to . --ext .js $(for d in widgets-src examples; do [ -e \"$d\" ] && echo \"$d\"; done)",
     "lint": "npm run lint:js && npm run lint:eslint && npm run lint:testids && npm run lint:angular",
     "widget": "node scripts/widget.js",
+    "login": "node scripts/widget.js login",
+    "list": "node scripts/widget.js list",
+    "remote-list": "node scripts/widget.js remote-list",
+    "pull": "node scripts/widget.js pull",
     "ship": "node scripts/widget.js ship",
     "verify-remote": "node scripts/widget.js verify-remote"
   },
@@ -24,6 +30,9 @@
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
     "http-proxy-middleware": "^3.0.3"
+  },
+  "optionalDependencies": {
+    "@napi-rs/keyring": "^1.1.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.44.0",
@@ -36,5 +45,8 @@
     "oxlint": "^1.0.0",
     "supertest": "^7.0.0"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  }
 }

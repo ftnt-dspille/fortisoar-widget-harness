@@ -64,7 +64,7 @@ async function boot(page, scenario, opts) {
 
   // Wait for the widget to be ready and test probe available.
   await page.waitForFunction(
-    () => window.__fsrPlaybookBuilder__ && typeof window.__fsrPlaybookBuilder__.state === 'string',
+    () => window.__fsrSocAssistant__ && typeof window.__fsrSocAssistant__.state === 'string',
     null, { timeout: 25000 }
   );
 
@@ -72,7 +72,7 @@ async function boot(page, scenario, opts) {
   // (showQuickActions() is intentionally false while a turn is sending, so
   // asserting grid visibility mid-opener would be racy).
   await page.waitForFunction(
-    () => window.__fsrPlaybookBuilder__ && window.__fsrPlaybookBuilder__.state === 'idle',
+    () => window.__fsrSocAssistant__ && window.__fsrSocAssistant__.state === 'idle',
     null, { timeout: 10000 }
   ).catch(() => {});
 
@@ -81,7 +81,7 @@ async function boot(page, scenario, opts) {
 
 async function waitForState(page, state, timeout = 5000) {
   await page.waitForFunction(
-    (s) => window.__fsrPlaybookBuilder__ && window.__fsrPlaybookBuilder__.state === s,
+    (s) => window.__fsrSocAssistant__ && window.__fsrSocAssistant__.state === s,
     state, { timeout }
   );
 }
@@ -99,9 +99,9 @@ test.describe('Triage context interactions (Phase F)', () => {
 
       // Verify we're in triage intent with entity context.
       const probe = await page.evaluate(() => ({
-        intent: window.__fsrPlaybookBuilder__.intent,
-        entity: window.__fsrPlaybookBuilder__.entity,
-        showQuickActions: window.__fsrPlaybookBuilder__.showQuickActions
+        intent: window.__fsrSocAssistant__.intent,
+        entity: window.__fsrSocAssistant__.entity,
+        showQuickActions: window.__fsrSocAssistant__.showQuickActions
       }));
       expect(probe.intent).toBe('triage');
       expect(probe.entity).toBeTruthy();
@@ -134,11 +134,11 @@ test.describe('Triage context interactions (Phase F)', () => {
       });
 
       // Before click: no user messages.
-      let msgCount = await page.evaluate(() => window.__fsrPlaybookBuilder__.messageCount);
+      let msgCount = await page.evaluate(() => window.__fsrSocAssistant__.messageCount);
       let userCount = await page.evaluate(() => {
-        return window.__fsrPlaybookBuilder__.state &&
-          window.__fsrPlaybookBuilder__.lastTurn &&
-          (window.__fsrPlaybookBuilder__.lastTurn.messages || [])
+        return window.__fsrSocAssistant__.state &&
+          window.__fsrSocAssistant__.lastTurn &&
+          (window.__fsrSocAssistant__.lastTurn.messages || [])
             .filter(m => m.role === 'user').length;
       });
 
@@ -152,17 +152,17 @@ test.describe('Triage context interactions (Phase F)', () => {
       await iocsCard.click();
       // Wait for the turn to start: messageCount must increase beyond its pre-click value.
       await page.waitForFunction(
-        (prev) => window.__fsrPlaybookBuilder__.messageCount > prev,
+        (prev) => window.__fsrSocAssistant__.messageCount > prev,
         msgCount, { timeout: 5000 }
       );
 
       // After click: messageCount increased.
-      msgCount = await page.evaluate(() => window.__fsrPlaybookBuilder__.messageCount);
+      msgCount = await page.evaluate(() => window.__fsrSocAssistant__.messageCount);
       expect(msgCount).toBeGreaterThan(0);
 
       // The most recent message is from the user and contains the chip prompt.
       const lastMsg = await page.evaluate(() => {
-        const m = window.__fsrPlaybookBuilder__.lastTurn;
+        const m = window.__fsrSocAssistant__.lastTurn;
         return m ? { role: m.role, content: m.content } : null;
       });
       // The user message is appended first; the assistant message arrives async.
@@ -171,7 +171,7 @@ test.describe('Triage context interactions (Phase F)', () => {
       expect(msgTexts.some(t => t.includes(iocsPrompt))).toBe(true);
 
       // The last sent payload includes the entity block and intent.
-      const payload = await page.evaluate(() => window.__fsrPlaybookBuilder__.lastPayload);
+      const payload = await page.evaluate(() => window.__fsrSocAssistant__.lastPayload);
       expect(payload).toBeTruthy();
       expect(payload.intent).toBe('triage');
       expect(payload.entity).toBeTruthy();
@@ -197,12 +197,12 @@ test.describe('Triage context interactions (Phase F)', () => {
 
       // Wait for the widget to collapse the quick-actions grid (state-driven).
       await page.waitForFunction(
-        () => window.__fsrPlaybookBuilder__.showQuickActions === false,
+        () => window.__fsrSocAssistant__.showQuickActions === false,
         null, { timeout: 5000 }
       );
 
       // showQuickActions() should now return false.
-      const showQA = await page.evaluate(() => window.__fsrPlaybookBuilder__.showQuickActions);
+      const showQA = await page.evaluate(() => window.__fsrSocAssistant__.showQuickActions);
       expect(showQA).toBe(false);
 
       // Grid is gone from the DOM.
@@ -224,7 +224,7 @@ test.describe('Triage context interactions (Phase F)', () => {
 
       const btn = page.locator('[data-testid="pull-page-details"]');
       await expect(btn).toBeVisible();
-      expect(await page.evaluate(() => window.__fsrPlaybookBuilder__.composerText)).toBe('');
+      expect(await page.evaluate(() => window.__fsrSocAssistant__.composerText)).toBe('');
 
       expect(consoleErrors).toEqual([]);
     });
@@ -234,16 +234,26 @@ test.describe('Triage context interactions (Phase F)', () => {
         entity: SAMPLE_INCIDENT, extra: '&opener=1'
       });
 
+      const textareaEl = page.locator('.fsr-pb-widget .composer textarea');
+      const heightBefore = (await textareaEl.boundingBox()).height;
+
       const btn = page.locator('[data-testid="pull-page-details"]');
       await btn.click();
 
       // Wait for the summary to populate (async).
       await page.waitForFunction(
-        () => window.__fsrPlaybookBuilder__.composerText.length > 0,
+        () => window.__fsrSocAssistant__.composerText.length > 0,
         null, { timeout: 5000 }
       );
 
-      const text = await page.evaluate(() => window.__fsrPlaybookBuilder__.composerText);
+      // The composer must grow to reveal the pulled-in multi-line summary —
+      // not stay pinned at its single-line default height with a scrollbar.
+      await expect.poll(
+        async () => (await textareaEl.boundingBox()).height,
+        { timeout: 3000 }
+      ).toBeGreaterThan(heightBefore + 10);
+
+      const text = await page.evaluate(() => window.__fsrSocAssistant__.composerText);
 
       // Summary should include the incident name and other key fields.
       expect(text).toContain(SAMPLE_INCIDENT.name);
@@ -271,7 +281,7 @@ test.describe('Triage context interactions (Phase F)', () => {
       await textarea.fill(prefix);
       // Ensure the model captured the prefix before clicking (avoid a fill/click race).
       await page.waitForFunction(
-        (p) => (window.__fsrPlaybookBuilder__.composerText || '').indexOf(p) === 0,
+        (p) => (window.__fsrSocAssistant__.composerText || '').indexOf(p) === 0,
         prefix, { timeout: 2000 }
       );
 
@@ -279,11 +289,11 @@ test.describe('Triage context interactions (Phase F)', () => {
       await btn.click();
 
       await page.waitForFunction(
-        (minLen) => window.__fsrPlaybookBuilder__.composerText.length > minLen,
+        (minLen) => window.__fsrSocAssistant__.composerText.length > minLen,
         prefix.length + 50, { timeout: 5000 }
       );
 
-      const finalText = await page.evaluate(() => window.__fsrPlaybookBuilder__.composerText);
+      const finalText = await page.evaluate(() => window.__fsrSocAssistant__.composerText);
       // Existing text is preserved (not clobbered), separated from the pulled
       // summary by a blank line, and the summary follows it.
       expect(finalText.indexOf(prefix)).toBe(0);
@@ -310,14 +320,14 @@ test.describe('Triage context interactions (Phase F)', () => {
 
       // Immediately check: button should be disabled while sending.
       await page.waitForFunction(
-        () => window.__fsrPlaybookBuilder__.state === 'sending',
+        () => window.__fsrSocAssistant__.state === 'sending',
         null, { timeout: 1000 }
       );
       await expect(btn).toBeDisabled();
 
       // Let the turn finish.
       await page.waitForFunction(
-        () => window.__fsrPlaybookBuilder__.state === 'idle',
+        () => window.__fsrSocAssistant__.state === 'idle',
         null, { timeout: 6000 }
       );
       await expect(btn).toBeEnabled();
@@ -347,7 +357,7 @@ test.describe('Triage context interactions (Phase F)', () => {
 
       // Wait for the turn to complete.
       await page.waitForFunction(
-        () => window.__fsrPlaybookBuilder__.messageCount > 1,
+        () => window.__fsrSocAssistant__.messageCount > 1,
         null, { timeout: 6000 }
       );
 
@@ -364,7 +374,7 @@ test.describe('Triage context interactions (Phase F)', () => {
 
       // Let the auto-seed complete (first assistant message).
       await page.waitForFunction(
-        () => window.__fsrPlaybookBuilder__.messageCount > 0,
+        () => window.__fsrSocAssistant__.messageCount > 0,
         null, { timeout: 6000 }
       );
 
@@ -377,7 +387,7 @@ test.describe('Triage context interactions (Phase F)', () => {
         });
 
       // Get the message count before the handoff.
-      const msgCountBefore = await page.evaluate(() => window.__fsrPlaybookBuilder__.messageCount);
+      const msgCountBefore = await page.evaluate(() => window.__fsrSocAssistant__.messageCount);
 
       const handoffBtn = page.locator('[data-testid="build-from-triage"]');
       await expect(handoffBtn).toBeVisible();
@@ -387,16 +397,16 @@ test.describe('Triage context interactions (Phase F)', () => {
 
       // Wait for the new user message to appear.
       await page.waitForFunction(
-        (before) => window.__fsrPlaybookBuilder__.messageCount > before,
+        (before) => window.__fsrSocAssistant__.messageCount > before,
         msgCountBefore, { timeout: 3000 }
       );
 
       // Check intent flipped to build.
-      const intent = await page.evaluate(() => window.__fsrPlaybookBuilder__.intent);
+      const intent = await page.evaluate(() => window.__fsrSocAssistant__.intent);
       expect(intent).toBe('build');
 
       // The directive message should have been appended.
-      const lastPayload = await page.evaluate(() => window.__fsrPlaybookBuilder__.lastPayload);
+      const lastPayload = await page.evaluate(() => window.__fsrSocAssistant__.lastPayload);
       expect(lastPayload).toBeTruthy();
       expect(lastPayload.intent).toBe('build');
 
@@ -417,12 +427,12 @@ test.describe('Triage context interactions (Phase F)', () => {
       // incident_smtp_intrusion fixture includes tool calls (search_assets, fortisiem.run_query, etc.).
       // Wait for the first turn to complete so tools are in the transcript.
       await page.waitForFunction(
-        () => window.__fsrPlaybookBuilder__.messageCount > 0,
+        () => window.__fsrSocAssistant__.messageCount > 0,
         null, { timeout: 6000 }
       );
 
       // Get tools used.
-      const toolsUsed = await page.evaluate(() => window.__fsrPlaybookBuilder__.toolsUsedInTriage);
+      const toolsUsed = await page.evaluate(() => window.__fsrSocAssistant__.toolsUsedInTriage);
       // incident_smtp_intrusion should have produced some tools.
       console.log('Tools used in triage:', toolsUsed);
 
@@ -434,13 +444,13 @@ test.describe('Triage context interactions (Phase F)', () => {
         // Wait for the directive to be sent.
         await page.waitForFunction(
           () => {
-            const lastPayload = window.__fsrPlaybookBuilder__.lastPayload;
+            const lastPayload = window.__fsrSocAssistant__.lastPayload;
             return lastPayload && lastPayload.intent === 'build';
           },
           null, { timeout: 6000 }
         );
 
-        const lastPayload = await page.evaluate(() => window.__fsrPlaybookBuilder__.lastPayload);
+        const lastPayload = await page.evaluate(() => window.__fsrSocAssistant__.lastPayload);
         const directiveMsg = lastPayload.messages.find(
           m => m.role === 'user' && m.content.includes('Design a re-runnable')
         );
@@ -464,12 +474,12 @@ test.describe('Triage context interactions (Phase F)', () => {
 
       // Wait for first turn(s) to complete.
       await page.waitForFunction(
-        () => window.__fsrPlaybookBuilder__.messageCount > 0,
+        () => window.__fsrSocAssistant__.messageCount > 0,
         null, { timeout: 6000 }
       );
 
       // Record the message count before handoff.
-      const triageMessageCount = await page.evaluate(() => window.__fsrPlaybookBuilder__.messageCount);
+      const triageMessageCount = await page.evaluate(() => window.__fsrSocAssistant__.messageCount);
 
       // Proceed with handoff.
       const handoffBtn = page.locator('[data-testid="build-from-triage"]');
@@ -479,14 +489,14 @@ test.describe('Triage context interactions (Phase F)', () => {
         // Wait for the directive to be sent.
         await page.waitForFunction(
           () => {
-            const lastPayload = window.__fsrPlaybookBuilder__.lastPayload;
+            const lastPayload = window.__fsrSocAssistant__.lastPayload;
             return lastPayload && lastPayload.intent === 'build';
           },
           null, { timeout: 6000 }
         );
 
         // Check the payload's messages[]: should include prior turns + new directive.
-        const lastPayload = await page.evaluate(() => window.__fsrPlaybookBuilder__.lastPayload);
+        const lastPayload = await page.evaluate(() => window.__fsrSocAssistant__.lastPayload);
         expect(lastPayload.messages.length).toBeGreaterThan(triageMessageCount);
 
         // The prior triage messages should still be in the array.
@@ -507,7 +517,7 @@ test.describe('Triage context interactions (Phase F)', () => {
       // The widget is in triage with auto-seed, but auto-seed is an ASSISTANT message,
       // not a user turn. If we use playbook_soc_demo, it may not auto-seed.
       // Check: canBuildFromTriage should be false if no user message exists.
-      const canBuild = await page.evaluate(() => window.__fsrPlaybookBuilder__.canBuildFromTriage);
+      const canBuild = await page.evaluate(() => window.__fsrSocAssistant__.canBuildFromTriage);
 
       const handoffBtn = page.locator('[data-testid="build-from-triage"]');
       if (!canBuild) {

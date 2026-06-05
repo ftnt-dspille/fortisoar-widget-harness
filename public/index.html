@@ -1924,8 +1924,16 @@
 
           const ctrlName = HU.deriveControllerName(current.name, current.version);
           renderLintWarnings(current);
+          // Machine-readable bootstrap-blocked signal so automated callers
+          // (e2e) can fast-fail with the real lint message instead of waiting
+          // out a 15s idle timeout that reads like "the box is down". Cleared
+          // on every mount attempt; set only when lint blocks the mount below.
+          window.__HARNESS_LINT_BLOCKED__ = null;
           const lintErrors = (current.lint && current.lint.errors) || [];
           if (lintErrors.length > 0) {
+            window.__HARNESS_LINT_BLOCKED__ = lintErrors.map(function (e) {
+              return { code: e.code, message: e.message };
+            });
             renderLintBanner(host, current, lintErrors);
             return;
           }

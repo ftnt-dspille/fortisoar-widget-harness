@@ -31,7 +31,7 @@ async function boot(page, mock, extra) {
     { waitUntil: 'domcontentloaded' }
   );
   await page.waitForFunction(
-    () => window.__fsrPlaybookBuilder__ && typeof window.__fsrPlaybookBuilder__.state === 'string',
+    () => window.__fsrSocAssistant__ && typeof window.__fsrSocAssistant__.state === 'string',
     null, { timeout: 25000 }
   );
 }
@@ -106,7 +106,7 @@ test.describe('playbook_offer 2.6.0 reviewable draft', () => {
 
     // the resume payload (captured by the widget debug probe) carries the
     // contract-shaped edits: manual_input_prompts + branch_labels
-    const accept = await page.evaluate(() => window.__fsrPlaybookBuilder__.lastPayload);
+    const accept = await page.evaluate(() => window.__fsrSocAssistant__.lastPayload);
     expect(accept, 'accept resume payload was sent').toBeTruthy();
     expect(accept.decision).toBe('accept');
     expect(accept.title).toContain('C2 Containment');

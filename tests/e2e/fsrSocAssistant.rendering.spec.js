@@ -36,7 +36,7 @@ test('alert: jinja stripped, badge shows real severity not ERROR', async ({ page
     window.__fsrPbEntity__ = entity;
   }, { id: WIDGET_ID, entity: ALERT });
   await page.goto(`/?widget=${WIDGET_ID}&context=Dashboard&mock=incident_smtp_intrusion&fastmock=1`, { waitUntil: 'domcontentloaded' });
-  await waitForWidgetIdle(page, '__fsrPlaybookBuilder__');
+  await waitForWidgetIdle(page, '__fsrSocAssistant__');
 
   const card = page.locator('[data-testid="info-card-entity-777"]');
   await expect(card).toBeVisible();
@@ -81,7 +81,7 @@ test('detail-view entity seed renders as a structured card; build toggle round-t
     window.__fsrPbEntity__ = entity;
   }, { id: WIDGET_ID, entity: INCIDENT_DETAIL });
   await page.goto(`/?widget=${WIDGET_ID}&context=Dashboard&mock=incident_smtp_intrusion&fastmock=1`, { waitUntil: 'domcontentloaded' });
-  await waitForWidgetIdle(page, '__fsrPlaybookBuilder__');
+  await waitForWidgetIdle(page, '__fsrSocAssistant__');
 
   const card = page.locator('[data-testid="info-card-entity-558"]');
   await expect(card).toBeVisible();
@@ -91,13 +91,13 @@ test('detail-view entity seed renders as a structured card; build toggle round-t
   await expect(card.locator('.status-row-label', { hasText: 'MITRE' })).toBeVisible();
   await expect(card.locator('.status-tag').first()).toBeVisible();
 
-  expect(await page.evaluate(() => window.__fsrPlaybookBuilder__.intent)).toBe('triage');
+  expect(await page.evaluate(() => window.__fsrSocAssistant__.intent)).toBe('triage');
   await page.locator('[data-testid="switch-to-build"]').click();
-  expect(await page.evaluate(() => window.__fsrPlaybookBuilder__.intent)).toBe('build');
+  expect(await page.evaluate(() => window.__fsrSocAssistant__.intent)).toBe('build');
   await expect(page.locator('[data-testid="build-hint"]')).toBeVisible();
   await expect(page.locator('[data-testid="switch-to-triage"]')).toBeVisible();
   await page.locator('[data-testid="switch-to-triage"]').click();
-  expect(await page.evaluate(() => window.__fsrPlaybookBuilder__.intent)).toBe('triage');
+  expect(await page.evaluate(() => window.__fsrSocAssistant__.intent)).toBe('triage');
 
   await page.screenshot({ path: '/tmp/detail_view.png', fullPage: true });
   expect(errors, 'no errors: ' + errors.join(' | ')).toEqual([]);
@@ -117,7 +117,7 @@ test('info_cards fixture renders all card kinds without errors', async ({ page }
     localStorage.removeItem('fsrPbSession');
   }, WIDGET_ID);
   await page.goto(`/?widget=${WIDGET_ID}&context=Dashboard&mock=info_cards&fastmock=1&opener=1`, { waitUntil: 'domcontentloaded' });
-  await waitForWidgetIdle(page, '__fsrPlaybookBuilder__');
+  await waitForWidgetIdle(page, '__fsrSocAssistant__');
 
   // Backend pre-flight activity trail (contract 2.8.0) coalesces into one
   // block of bulleted phase lines, rendered ahead of the cards.

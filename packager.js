@@ -126,6 +126,157 @@ function rewriteForVersion(dir, widgetName, version) {
 // tmp copy) and by the bump endpoint (against the source dir).
 const syncSourceToInfoJson = rewriteForVersion;
 
+// A widget's `name` is its identity everywhere that matters: SOAR keys the
+// installed widget by it, the controller registrations derive from it
+// (`<name><ver>DevCtrl` / `edit<Name><ver>DevCtrl`), and the packaged asset
+// paths are prefixed by it (`<name>-X.Y.Z/...`). It must be an identifier:
+// starts with a letter, alphanumeric, no spaces and no version suffix.
+function isValidWidgetName(name) {
+  return typeof name === "string" && /^[a-zA-Z][a-zA-Z0-9]*$/.test(name);
+}
+
+// Derive a camelCase identifier `name` from a human-facing title. Splits on any
+// run of non-alphanumerics, lowercases the first token and TitleCases the rest,
+// then joins: "FSR Playbook Composer" -> "fsrPlaybookComposer", "C2 Hunter" ->
+// "c2Hunter". Throws if the result isn't a valid widget name (e.g. a title that
+// starts with a digit, or is all punctuation).
+function widgetNameFromTitle(title) {
+  const tokens = String(title || "").split(/[^A-Za-z0-9]+/).filter(Boolean);
+  const name = tokens
+    .map((t, i) => (i === 0 ? t.toLowerCase() : t.charAt(0).toUpperCase() + t.slice(1).toLowerCase()))
+    .join("");
+  if (!isValidWidgetName(name)) {
+    throw new Error(`cannot derive a valid widget name from title ${JSON.stringify(title)} (got ${JSON.stringify(name)})`);
+  }
+  return name;
+}
+
+// Case-form variations of a widget name paired with their new counterparts.
+// Deduped by the source form so we never emit two rules for the same token.
+// `fsrPlaybookBuilder` yields the bare form plus `FsrPlaybookBuilder` (used by
+// the `edit<Name>` controller); both map to the equivalent new-name form.
+function nameVariationPairs(oldName, newName) {
+  const map = new Map();
+  for (const fn of [capitalize, decapitalize, (s) => s]) {
+    const from = fn(oldName);
+    if (!map.has(from)) map.set(from, fn(newName));
+  }
+  return [...map.entries()];
+}
+
+// One-shot base-name substitution across a widget's source files. Unlike
+// rewriteForVersion (which is keyed off the CURRENT name and only updates the
+// numeric version suffix), this swaps the widget identity old -> new wherever
+// it appears: info.json `name`, controller registrations + `$inject` + function
+// names, ng-controller refs, and versioned asset path prefixes. Each variation
+// is a plain global replace — the two case forms are not substrings of one
+// another, and a distinctive camelCase widget name is not a substring of the
+// internal abbreviation prefixes (e.g. `fsrPb*`), so those are left untouched.
+// Returns the list of files actually changed (for reporting/tests).
+function rewriteNameInDir(dir, oldName, newName) {
+  const pairs = nameVariationPairs(oldName, newName);
+  const changed = [];
+  (function walk(cur) {
+    for (const e of fs.readdirSync(cur, { withFileTypes: true })) {
+      if (e.name === ".DS_Store" || e.name.startsWith("._") || e.name === "node_modules") continue;
+      const p = path.join(cur, e.name);
+      if (e.isDirectory()) { walk(p); continue; }
+      if (!/\.(js|html|json)$/.test(e.name)) continue;
+      const before = fs.readFileSync(p, "utf8");
+      let after = before;
+      for (const [from, to] of pairs) {
+        after = after.split(from).join(to);
+      }
+      if (after !== before) {
+        fs.writeFileSync(p, after);
+        changed.push(p);
+      }
+    }
+  })(dir);
+  return changed;
+}
+
+// Replace every literal occurrence of `from` with `to` across a widget's source
+// files. Used to swap the human-readable title string (e.g. an aria-label or a
+// comment) that the camelCase name substitution in rewriteNameInDir cannot
+// reach. No-op when `from` is empty/identical so callers can pass it
+// unconditionally. Returns the files actually changed.
+function replaceTextInDir(dir, from, to) {
+  const changed = [];
+  if (!from || from === to) return changed;
+  (function walk(cur) {
+    for (const e of fs.readdirSync(cur, { withFileTypes: true })) {
+      if (e.name === ".DS_Store" || e.name.startsWith("._") || e.name === "node_modules") continue;
+      const p = path.join(cur, e.name);
+      if (e.isDirectory()) { walk(p); continue; }
+      if (!/\.(js|html|json)$/.test(e.name)) continue;
+      const before = fs.readFileSync(p, "utf8");
+      const after = before.split(from).join(to);
+      if (after !== before) { fs.writeFileSync(p, after); changed.push(p); }
+    }
+  })(dir);
+  return changed;
+}
+
+// Rename a widget on disk: rewrite the identity name across its source files,
+// update the display/identity fields in info.json, replace the old human title
+// string wherever it appears, then move the folder so the directory name
+// matches the new identity. `srcRoot` is the widgets-src dir; the widget lives
+// at `<srcRoot>/<oldName>/widget`. Optional `opts`: `title`, `subtitle`,
+// `description` (→ metadata.description), `releaseNotes` — each applied only
+// when provided. Throws (without moving) if the new name is invalid, unchanged,
+// or its target folder already exists, so a failed rename never leaves a
+// half-moved tree. Returns a report; `changedFiles` paths point at the moved
+// (new) folder.
+function renameWidget(srcRoot, oldName, newName, opts = {}) {
+  if (!isValidWidgetName(newName)) {
+    throw new Error(`invalid widget name: ${JSON.stringify(newName)} (must be a letter-led identifier, no spaces/version)`);
+  }
+  if (newName === oldName) throw new Error("new name is identical to the current name");
+  const oldFolder = path.join(srcRoot, oldName);
+  const newFolder = path.join(srcRoot, newName);
+  const widgetDir = path.join(oldFolder, "widget");
+  const infoPath = path.join(widgetDir, "info.json");
+  if (!fs.existsSync(infoPath)) {
+    throw new Error(`widget not found: ${infoPath} missing`);
+  }
+  if (fs.existsSync(newFolder)) throw new Error(`target folder already exists: ${newFolder}`);
+
+  // Snapshot the old human title before any rewrite so we can swap the display
+  // string (aria-labels, comments) that the camelCase substitution can't see.
+  const oldTitle = JSON.parse(fs.readFileSync(infoPath, "utf8")).title;
+
+  const changed = new Set(rewriteNameInDir(widgetDir, oldName, newName));
+
+  if (opts.title) {
+    for (const f of replaceTextInDir(widgetDir, oldTitle, opts.title)) changed.add(f);
+  }
+
+  // Apply info.json display/identity fields. `name` is handled by the name
+  // substitution above; everything here is free-text that callers opt into.
+  const raw = fs.readFileSync(infoPath, "utf8");
+  const info = JSON.parse(raw);
+  if (opts.title != null) info.title = opts.title;
+  if (opts.subtitle != null) info.subTitle = opts.subtitle;
+  if (opts.releaseNotes != null) info.releaseNotes = opts.releaseNotes;
+  if (opts.description != null) {
+    info.metadata = info.metadata || {};
+    info.metadata.description = opts.description;
+  }
+  const trailingNewline = /\n$/.test(raw) ? "\n" : "";
+  fs.writeFileSync(infoPath, JSON.stringify(info, null, 2) + trailingNewline);
+  changed.add(infoPath);
+
+  fs.renameSync(oldFolder, newFolder);
+
+  // Re-point changed paths at the moved folder so the report is accurate.
+  const newWidgetDir = path.join(newFolder, "widget");
+  const changedFiles = [...changed].map((p) =>
+    p.startsWith(widgetDir) ? newWidgetDir + p.slice(widgetDir.length) : p
+  );
+  return { oldName, newName, oldFolder, newFolder, changedFiles };
+}
+
 function uniq(arr) {
   const seen = new Set();
   return arr.filter((v) => (seen.has(v) ? false : (seen.add(v), true)));
@@ -450,6 +601,12 @@ module.exports = {
   writeInfoVersion,
   rewriteForVersion,
   syncSourceToInfoJson,
+  isValidWidgetName,
+  widgetNameFromTitle,
+  nameVariationPairs,
+  rewriteNameInDir,
+  replaceTextInDir,
+  renameWidget,
   validateInfoMetadata,
   validateControllers,
   validateWidget,

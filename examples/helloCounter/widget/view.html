@@ -1,0 +1,23 @@
+<!-- Example widget — the VIEW template. Bound to helloCounter100DevCtrl.
+     Keep DOM hooks (data-testid) on interactive elements so the e2e test can
+     drive them. -->
+<div class="widget-container hello-counter-widget" style="padding: 12px 16px;">
+  <h5 class="margin-top-0">{{ config.label }}</h5>
+
+  <div class="display-flex" style="align-items: center; gap: 12px;">
+    <button type="button" class="btn btn-default" data-testid="hc-dec"
+            data-ng-click="decrement()">−</button>
+
+    <span class="font-size-20" data-testid="hc-count">{{ count }}</span>
+
+    <button type="button" class="btn btn-primary" data-testid="hc-inc"
+            data-ng-click="increment()">+</button>
+
+    <button type="button" class="btn btn-link" data-testid="hc-reset"
+            data-ng-click="reset()">reset</button>
+  </div>
+
+  <small class="muted-65 font-size-12 margin-top-sm display-block">
+    Step {{ config.step }} · starts at {{ config.start }} — change these in the widget editor.
+  </small>
+</div>

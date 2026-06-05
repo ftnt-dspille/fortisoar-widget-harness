@@ -3,9 +3,31 @@
 const fs = require("fs");
 const path = require("path");
 
-const WIDGETS_SRC = process.env.WIDGETS_SRC
-  ? path.resolve(process.env.WIDGETS_SRC)
-  : path.resolve(__dirname, "widgets-src");
+// Discovery roots — merge the user's widget root with the harness's bundled
+// examples/ so the example's tests run in the monorepo AND a clone, and even
+// when WIDGETS_SRC is pinned (via .env or the Makefile). Mirrors server.js.
+function widgetRoots() {
+  const roots = [];
+  if (process.env.WIDGETS_SRC) roots.push(path.resolve(process.env.WIDGETS_SRC));
+  else roots.push(path.resolve(__dirname, "widgets-src")); // false-existsSync for a dangling symlink
+  roots.push(path.resolve(__dirname, "examples"));
+  return [...new Set(roots)].filter((p) => fs.existsSync(p));
+}
+const WIDGET_ROOTS = widgetRoots();
+
+// All widget dirs (across every root) that carry a tests/ folder, as
+// { name, dir } — the candidate set for the WIDGET filter.
+function testableWidgets() {
+  const out = [];
+  for (const root of WIDGET_ROOTS) {
+    for (const e of fs.readdirSync(root, { withFileTypes: true })) {
+      if (!e.isDirectory()) continue;
+      const dir = path.join(root, e.name);
+      if (fs.existsSync(path.join(dir, "tests"))) out.push({ name: e.name, dir });
+    }
+  }
+  return out;
+}
 
 // Each widget repo under WIDGETS_SRC can contribute its own Jest project so the
 // harness owns the test runtime (jest, jsdom, angular, angular-mocks). Widget
@@ -21,20 +43,15 @@ const WIDGET_FILTER = (process.env.WIDGET || "").trim();
 
 function discoverWidgetProjects() {
   if (!WIDGET_FILTER) return []; // default: don't fan out across siblings
-  if (!fs.existsSync(WIDGETS_SRC)) return [];
 
   const wantAll = WIDGET_FILTER === "all";
   const wanted = new Set(
     WIDGET_FILTER.split(",").map((s) => s.trim()).filter(Boolean)
   );
 
-  return fs
-    .readdirSync(WIDGETS_SRC, { withFileTypes: true })
-    .filter((e) => e.isDirectory())
-    .map((e) => path.join(WIDGETS_SRC, e.name))
-    .filter((dir) => fs.existsSync(path.join(dir, "tests")))
-    .filter((dir) => wantAll || wanted.has(path.basename(dir)))
-    .map((dir) => {
+  return testableWidgets()
+    .filter(({ name }) => wantAll || wanted.has(name))
+    .map(({ dir }) => {
       // Prefer the widget's own jest.config.js so it controls testEnvironment
       // / testMatch; fall back to a sane jsdom default. testEnvironmentOptions
       // defaults to {} because jest-environment-jsdom@29 reads `.html` off it
@@ -58,13 +75,8 @@ function discoverWidgetProjects() {
 }
 
 // Fail loudly on a typo'd WIDGET name rather than silently running harness only.
-if (WIDGET_FILTER && WIDGET_FILTER !== "all" && fs.existsSync(WIDGETS_SRC)) {
-  const have = new Set(
-    fs
-      .readdirSync(WIDGETS_SRC, { withFileTypes: true })
-      .filter((e) => e.isDirectory() && fs.existsSync(path.join(WIDGETS_SRC, e.name, "tests")))
-      .map((e) => e.name)
-  );
+if (WIDGET_FILTER && WIDGET_FILTER !== "all") {
+  const have = new Set(testableWidgets().map((w) => w.name));
   const missing = WIDGET_FILTER.split(",")
     .map((s) => s.trim())
     .filter((s) => s && !have.has(s));

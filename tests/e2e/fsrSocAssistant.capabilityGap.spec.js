@@ -29,7 +29,7 @@ async function boot(page, extra) {
     { waitUntil: 'domcontentloaded' }
   );
   await page.waitForFunction(
-    () => window.__fsrPlaybookBuilder__ && typeof window.__fsrPlaybookBuilder__.state === 'string',
+    () => window.__fsrSocAssistant__ && typeof window.__fsrSocAssistant__.state === 'string',
     null, { timeout: 25000 }
   );
 }

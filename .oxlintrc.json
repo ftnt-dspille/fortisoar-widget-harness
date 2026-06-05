@@ -1,0 +1,28 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "env": { "browser": true },
+  "globals": { "angular": "readonly", "$": "readonly", "jQuery": "readonly" },
+  "ignorePatterns": [
+    "**/*.min.js",
+    "**/widgetAssets/js/lib/**",
+    "**/vendor/**",
+    "**/node_modules/**"
+  ],
+  "categories": {
+    "correctness": "warn",
+    "suspicious": "warn",
+    "perf": "warn"
+  },
+  "rules": {
+    "no-underscore-dangle": "off",
+    "no-unused-vars": ["warn", { "argsIgnorePattern": "^_|index", "caughtErrors": "none" }],
+    "no-unused-expressions": ["warn", { "allowShortCircuit": true, "allowTernary": true }],
+    "unicorn/consistent-function-scoping": "off",
+    "unicorn/no-array-sort": "off",
+    "unicorn/prefer-string-starts-ends-with": "off",
+    "unicorn/prefer-array-find": "off",
+    "unicorn/prefer-add-event-listener": "off",
+    "no-useless-escape": "off",
+    "oxc/approx-constant": "off"
+  }
+}

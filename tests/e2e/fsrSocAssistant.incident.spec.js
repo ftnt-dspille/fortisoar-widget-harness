@@ -63,14 +63,14 @@ async function boot(page, scenario, opts) {
 
   await page.goto(urlFor(scenario, opts.extra), { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(
-    () => window.__fsrPlaybookBuilder__ && typeof window.__fsrPlaybookBuilder__.state === 'string',
+    () => window.__fsrSocAssistant__ && typeof window.__fsrSocAssistant__.state === 'string',
     null, { timeout: 15000 }
   );
 }
 
 async function waitForState(page, state, timeout = 10000) {
   await page.waitForFunction(
-    (s) => window.__fsrPlaybookBuilder__ && window.__fsrPlaybookBuilder__.state === s,
+    (s) => window.__fsrSocAssistant__ && window.__fsrSocAssistant__.state === s,
     state, { timeout }
   );
 }
@@ -84,7 +84,7 @@ test.describe('incident_smtp_intrusion — triage flow', () => {
 
     // Phase B: the first assistant message is the seeded record summary.
     await page.waitForFunction(
-      () => window.__fsrPlaybookBuilder__ && window.__fsrPlaybookBuilder__.messageCount > 0,
+      () => window.__fsrSocAssistant__ && window.__fsrSocAssistant__.messageCount > 0,
       null, { timeout: 5000 }
     );
     const messages = page.locator('[data-testid="messages"]');
@@ -94,9 +94,9 @@ test.describe('incident_smtp_intrusion — triage flow', () => {
 
     // Phase A: intent + entity + mode stamped into outgoing payload.
     const probe = await page.evaluate(() => ({
-      intent: window.__fsrPlaybookBuilder__.intent,
-      entity: window.__fsrPlaybookBuilder__.entity,
-      lastPayload: window.__fsrPlaybookBuilder__.lastPayload
+      intent: window.__fsrSocAssistant__.intent,
+      entity: window.__fsrSocAssistant__.entity,
+      lastPayload: window.__fsrSocAssistant__.lastPayload
     }));
     expect(probe.intent).toBe('triage');
     expect(probe.entity && probe.entity.iri).toBe(SAMPLE_INCIDENT['@id']);
@@ -157,7 +157,7 @@ test.describe('Phase C — intent-aware layout', () => {
   test('triage hides YAML pane; "Build mode" flips intent and reveals it', async ({ page }) => {
     await boot(page, 'playbook_soc_demo', { entity: SAMPLE_INCIDENT, extra: '&opener=1' });
 
-    expect(await page.evaluate(() => window.__fsrPlaybookBuilder__.intent)).toBe('triage');
+    expect(await page.evaluate(() => window.__fsrSocAssistant__.intent)).toBe('triage');
     const buildBtn = page.locator('[data-testid="switch-to-build"]');
     await expect(buildBtn).toBeVisible();
 
@@ -168,18 +168,18 @@ test.describe('Phase C — intent-aware layout', () => {
     await huntChoice.waitFor({ state: 'visible', timeout: 15000 });
     await huntChoice.click();
 
-    await page.waitForFunction(() => window.__fsrPlaybookBuilder__.currentYaml.length > 0, null, { timeout: 15000 });
+    await page.waitForFunction(() => window.__fsrSocAssistant__.currentYaml.length > 0, null, { timeout: 15000 });
     await expect(page.locator('[data-testid="yaml-pane"]')).toHaveCount(0);
 
     await buildBtn.click();
     await expect(page.locator('[data-testid="yaml-pane"]')).toBeVisible();
     await expect(buildBtn).toHaveCount(0);
-    expect(await page.evaluate(() => window.__fsrPlaybookBuilder__.intent)).toBe('build');
+    expect(await page.evaluate(() => window.__fsrSocAssistant__.intent)).toBe('build');
   });
 
   test('dashboard mount (no entity) defaults to build — no Build-mode button', async ({ page }) => {
     await boot(page, 'playbook_soc_demo', { extra: '&opener=1' });
-    expect(await page.evaluate(() => window.__fsrPlaybookBuilder__.intent)).toBe('build');
+    expect(await page.evaluate(() => window.__fsrSocAssistant__.intent)).toBe('build');
     await expect(page.locator('[data-testid="switch-to-build"]')).toHaveCount(0);
   });
 });
@@ -214,7 +214,7 @@ test.describe('Phase F — ?mode=mock override', () => {
       extra: '&opener=1&mode=mock'
     });
     await page.locator('[data-testid="choice-card-intent"]').waitFor({ state: 'visible', timeout: 6000 });
-    const lastPayload = await page.evaluate(() => window.__fsrPlaybookBuilder__.lastPayload);
+    const lastPayload = await page.evaluate(() => window.__fsrSocAssistant__.lastPayload);
     expect(lastPayload.mode).toBe('mock');
   });
 });

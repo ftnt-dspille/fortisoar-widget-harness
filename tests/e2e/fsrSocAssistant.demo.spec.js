@@ -42,7 +42,7 @@ async function bootWidget(page, scenario) {
   }, WIDGET_ID);
   await page.goto(urlFor(scenario), { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(
-    () => window.__fsrPlaybookBuilder__ && typeof window.__fsrPlaybookBuilder__.state === 'string',
+    () => window.__fsrSocAssistant__ && typeof window.__fsrSocAssistant__.state === 'string',
     null, { timeout: 15000 }
   );
   return errors;
@@ -50,7 +50,7 @@ async function bootWidget(page, scenario) {
 
 async function waitForState(page, state, timeout = 5000) {
   await page.waitForFunction(
-    (s) => window.__fsrPlaybookBuilder__ && window.__fsrPlaybookBuilder__.state === s,
+    (s) => window.__fsrSocAssistant__ && window.__fsrSocAssistant__.state === s,
     state, { timeout }
   );
 }
@@ -150,7 +150,7 @@ async function waitForConnectorLoadSettled(page) {
   // makes an API call, then flips to false. Wait for the final flip before we
   // inject so the resolved promise doesn't clobber our fake list.
   await page.waitForFunction(() => {
-    const p = window.__fsrPlaybookBuilder__;
+    const p = window.__fsrSocAssistant__;
     return p && p.injectConnectors && p.connectorListLoading === false;
   }, null, { timeout: 8000 });
 }
@@ -158,7 +158,7 @@ async function waitForConnectorLoadSettled(page) {
 async function injectFakeConnectors(page) {
   await waitForConnectorLoadSettled(page);
   await page.evaluate(() => {
-    window.__fsrPlaybookBuilder__.injectConnectors([
+    window.__fsrSocAssistant__.injectConnectors([
       { name: 'fortinet-fsr-playbook-builder', title: 'FSR Playbook Builder', version: '1.0.0' },
       { name: 'fortinet-fortigate',            title: 'FortiGate',            version: '6.0.0' },
       { name: 'fortinet-fortiedr',             title: 'FortiEDR',             version: '2.1.0' },
@@ -257,7 +257,7 @@ test.describe('Connector combobox search', () => {
     // Reload the page — harness reads the same key on mount.
     await page.reload({ waitUntil: 'domcontentloaded' });
     await page.waitForFunction(
-      () => window.__fsrPlaybookBuilder__ && typeof window.__fsrPlaybookBuilder__.state === 'string',
+      () => window.__fsrSocAssistant__ && typeof window.__fsrSocAssistant__.state === 'string',
       null, { timeout: 15000 }
     );
 
@@ -266,7 +266,7 @@ test.describe('Connector combobox search', () => {
     // Re-inject the connector list AFTER opening so the openSettings()
     // re-fetch doesn't clobber it.
     await injectFakeConnectors(page);
-    const cfg = await page.evaluate(() => window.__fsrPlaybookBuilder__.config);
+    const cfg = await page.evaluate(() => window.__fsrSocAssistant__.config);
     expect(cfg.connectorName).toBe('fortinet-fsr-playbook-builder');
     expect(cfg.connectorVersion).toBe('1.0.0');
 
@@ -284,7 +284,7 @@ test.describe('Connector combobox search', () => {
     await page.locator('[data-testid="cfg-connector-option-fortinet-fsr-playbook-builder"]').click();
 
     await expect(page.locator('[data-testid="cfg-connector-combo"]')).toHaveCount(0);
-    const cfg = await page.evaluate(() => window.__fsrPlaybookBuilder__.config);
+    const cfg = await page.evaluate(() => window.__fsrSocAssistant__.config);
     expect(cfg.connectorName).toBe('fortinet-fsr-playbook-builder');
     expect(cfg.connectorVersion).toBe('1.0.0');
     expect(cfg.connectorTitle).toBe('FSR Playbook Builder');
@@ -329,7 +329,7 @@ test.describe('playbook_soc_demo — Path A (immediate action, multi-select dest
     await page.locator('[data-testid="action-confirm-card-block-ip-1"]').click();
     await waitForState(page, 'idle');
 
-    const events = await page.evaluate(() => window.__fsrPlaybookBuilder__.events.slice());
+    const events = await page.evaluate(() => window.__fsrSocAssistant__.events.slice());
     const resumeCalls = events.filter(e => e.type === 'action_call' && e.payload.action === 'chat_resume');
     // opener + 3 choices (intent, action_kind, connector_pick) + action_card approve = 4 resumes
     expect(resumeCalls.length).toBeGreaterThanOrEqual(4);
@@ -349,7 +349,7 @@ test.describe('playbook_soc_demo — Path A (immediate action, multi-select dest
     await page.locator('[data-testid="action-cancel-card-block-ip-1"]').click();
     await waitForState(page, 'idle');
 
-    const events = await page.evaluate(() => window.__fsrPlaybookBuilder__.events.slice());
+    const events = await page.evaluate(() => window.__fsrSocAssistant__.events.slice());
     const reject = events.find(e => e.type === 'action_call'
       && e.payload.action === 'chat_resume'
       && e.payload.decision === 'reject');
@@ -376,14 +376,14 @@ test.describe('playbook_soc_demo — Path B (build playbook + manual_input gates
 
     await waitForState(page, 'idle');
 
-    const events = await page.evaluate(() => window.__fsrPlaybookBuilder__.events.slice());
+    const events = await page.evaluate(() => window.__fsrSocAssistant__.events.slice());
     const respondCalls = events.filter(e => e.type === 'action_call' && e.payload.action === 'respond_manual_input');
     expect(respondCalls.length).toBe(2);
     expect(respondCalls[0].payload.decision).toBe('approve');
     expect(respondCalls[0].payload.input_id).toBe('mi-hosts');
     expect(respondCalls[1].payload.input_id).toBe('mi-block');
     // currentYaml extracted from the build_confirm fenced block
-    const yaml = await page.evaluate(() => window.__fsrPlaybookBuilder__.currentYaml);
+    const yaml = await page.evaluate(() => window.__fsrSocAssistant__.currentYaml);
     expect(yaml).toContain('IOC Sweep and Contain');
     expect(errors).toEqual([]);
   });
@@ -395,7 +395,7 @@ test.describe('playbook_soc_demo — Path B (build playbook + manual_input gates
     await pickChoice(page, 'build_confirm', 'no');
     await waitForState(page, 'idle');
 
-    const events = await page.evaluate(() => window.__fsrPlaybookBuilder__.events.slice());
+    const events = await page.evaluate(() => window.__fsrSocAssistant__.events.slice());
     expect(events.some(e => e.type === 'action_call' && e.payload.action === 'respond_manual_input')).toBe(false);
   });
 
@@ -412,7 +412,7 @@ test.describe('playbook_soc_demo — Path B (build playbook + manual_input gates
     // falls through to the same handler — the controller still calls respond_manual_input
     // with decision='reject'.
     await waitForState(page, 'sending').catch(() => {});
-    const events = await page.evaluate(() => window.__fsrPlaybookBuilder__.events.slice());
+    const events = await page.evaluate(() => window.__fsrSocAssistant__.events.slice());
     const respond = events.find(e => e.type === 'action_call' && e.payload.action === 'respond_manual_input');
     expect(respond).toBeTruthy();
     expect(respond.payload.decision).toBe('reject');
@@ -432,7 +432,7 @@ test.describe('immediate_block_ip — narrow single-select path', () => {
     await page.locator('[data-testid="action-confirm-card-block-ip-1"]').click();
     await waitForState(page, 'idle');
 
-    const events = await page.evaluate(() => window.__fsrPlaybookBuilder__.events.slice());
+    const events = await page.evaluate(() => window.__fsrSocAssistant__.events.slice());
     expect(events.some(e => e.type === 'action_call'
       && e.payload.action === 'chat_resume'
       && e.payload.decision === 'approve')).toBe(true);
@@ -467,7 +467,7 @@ test.describe('immediate_rejected — Cancel path', () => {
     await page.locator('[data-testid="action-cancel-card-block-ip-1"]').click();
     await waitForState(page, 'idle');
 
-    const events = await page.evaluate(() => window.__fsrPlaybookBuilder__.events.slice());
+    const events = await page.evaluate(() => window.__fsrSocAssistant__.events.slice());
     const reject = events.find(e => e.type === 'action_call'
       && e.payload.action === 'chat_resume'
       && e.payload.decision === 'reject');

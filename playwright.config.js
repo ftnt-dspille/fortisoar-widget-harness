@@ -10,11 +10,19 @@ const { defineConfig, devices } = require("@playwright/test");
 // tests/e2e/ folder, so per-widget regression tests live alongside the
 // widget source they exercise.
 module.exports = defineConfig({
-  testDir: "..",
+  // testDir is the harness itself (not the monorepo parent) so a standalone
+  // GitHub clone discovers specs too. widgets-src is the monorepo's symlink
+  // when present; examples/ ships the bundled example spec for a fresh clone.
+  testDir: __dirname,
   testMatch: [
-    "fortisoar-widget-harness/tests/e2e/**/*.spec.js",
+    "tests/e2e/**/*.spec.js",
     "widgets-src/*/tests/e2e/**/*.spec.js",
+    "examples/*/tests/e2e/**/*.spec.js",
   ],
+  // By default the e2e suite runs FULLY LOCALLY against the mocked SOAR proxy —
+  // no FortiSOAR login required. Specs whose filename contains "Live"/"live"
+  // drive a real box and are excluded unless E2E_LIVE=1 (see `test:e2e:live`).
+  testIgnore: process.env.E2E_LIVE ? [] : ["**/*[Ll]ive*.spec.js"],
   timeout: 45000,
   expect: { timeout: 10000 },
   retries: process.env.CI ? 1 : 0,

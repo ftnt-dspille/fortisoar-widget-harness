@@ -1,0 +1,30 @@
+<div class="modal-header">
+  <h4 class="modal-title">Configure Hello Counter</h4>
+</div>
+
+<form name="editHelloCounterForm" novalidate>
+  <div class="modal-body">
+    <div class="form-group">
+      <label for="hcLabel">Label</label>
+      <input type="text" id="hcLabel" class="form-control"
+             data-ng-model="config.label" placeholder="Clicks" maxlength="60" />
+    </div>
+
+    <div class="form-group">
+      <label for="hcStart">Start value</label>
+      <input type="number" id="hcStart" class="form-control"
+             data-ng-model="config.start" placeholder="0" />
+    </div>
+
+    <div class="form-group">
+      <label for="hcStep">Step</label>
+      <input type="number" id="hcStep" class="form-control"
+             data-ng-model="config.step" min="1" placeholder="1" />
+    </div>
+  </div>
+
+  <div class="modal-footer">
+    <button type="button" class="btn btn-default" data-ng-click="cancel()">Cancel</button>
+    <button type="button" class="btn btn-primary" data-ng-click="save()">Save</button>
+  </div>
+</form>
