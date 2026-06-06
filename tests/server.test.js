@@ -77,9 +77,9 @@ describe("discoverWidgets", () => {
     }
   });
 
-  test("discovers jinjaEditorWidget", () => {
+  test("discovers helloCounter", () => {
     const widgets = discoverWidgets();
-    const jinja = widgets.find((w) => w.name === "jinjaEditorWidget");
+    const jinja = widgets.find((w) => w.name === "helloCounter");
     expect(jinja).toBeDefined();
     expect(jinja.version).toMatch(/^\d+\.\d+\.\d+$/);
   });
@@ -95,10 +95,10 @@ describe("GET /_fsr/widgets", () => {
     expect(Array.isArray(res.body.widgets)).toBe(true);
   });
 
-  test("includes jinjaEditorWidget in widget list", async () => {
+  test("includes helloCounter in widget list", async () => {
     const res = await request(app).get("/_fsr/widgets");
     const names = res.body.widgets.map((w) => w.name);
-    expect(names).toContain("jinjaEditorWidget");
+    expect(names).toContain("helloCounter");
   });
 
   test("widget entries have expected shape", async () => {
@@ -121,7 +121,7 @@ describe("GET /_fsr/package/:id/info", () => {
 
   beforeAll(() => {
     const widgets = discoverWidgets();
-    const jinja = widgets.find((w) => w.name === "jinjaEditorWidget");
+    const jinja = widgets.find((w) => w.name === "helloCounter");
     widgetId = jinja && jinja.id;
   });
 
@@ -129,7 +129,7 @@ describe("GET /_fsr/package/:id/info", () => {
     if (!widgetId) return;
     const res = await request(app).get(`/_fsr/package/${widgetId}/info`);
     expect(res.status).toBe(200);
-    expect(res.body.name).toBe("jinjaEditorWidget");
+    expect(res.body.name).toBe("helloCounter");
     expect(typeof res.body.version).toBe("string");
   });
 
@@ -166,27 +166,27 @@ describe("Static file serving", () => {
 
   test("GET /<widget-id>/view.html serves the widget view template", async () => {
     const widgets = discoverWidgets();
-    const jinja = widgets.find((w) => w.name === "jinjaEditorWidget");
+    const jinja = widgets.find((w) => w.name === "helloCounter");
     if (!jinja) return;
     const res = await request(app).get(`/${jinja.id}/view.html`);
     expect(res.status).toBe(200);
     expect(res.headers["content-type"]).toMatch(/html/);
-    expect(res.text).toContain("jinjaEditorWidget");
+    expect(res.text).toContain("helloCounter");
   });
 
   test("GET /<widget-id>/info.json serves the widget manifest", async () => {
     const widgets = discoverWidgets();
-    const jinja = widgets.find((w) => w.name === "jinjaEditorWidget");
+    const jinja = widgets.find((w) => w.name === "helloCounter");
     if (!jinja) return;
     const res = await request(app).get(`/${jinja.id}/info.json`);
     expect(res.status).toBe(200);
     const body = JSON.parse(res.text);
-    expect(body.name).toBe("jinjaEditorWidget");
+    expect(body.name).toBe("helloCounter");
   });
 
   test("GET /<widget-id>/nonexistent returns 404", async () => {
     const widgets = discoverWidgets();
-    const jinja = widgets.find((w) => w.name === "jinjaEditorWidget");
+    const jinja = widgets.find((w) => w.name === "helloCounter");
     if (!jinja) return;
     const res = await request(app).get(`/${jinja.id}/does-not-exist.js`);
     expect(res.status).toBe(404);
@@ -201,7 +201,7 @@ describe("POST /_fsr/package/:id — input validation", () => {
 
   beforeAll(() => {
     const widgets = discoverWidgets();
-    const jinja = widgets.find((w) => w.name === "jinjaEditorWidget");
+    const jinja = widgets.find((w) => w.name === "helloCounter");
     widgetId = jinja && jinja.id;
   });
 

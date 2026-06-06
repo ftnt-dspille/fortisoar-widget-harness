@@ -775,12 +775,29 @@ app.get("/_fsr/app.unmin.js", (_req, res) => {
 // when uibPopover needs the template. This must load AFTER app.unmin.js but can
 // load before or after harness.module.js (it only registers templates, doesn't
 // require real Angular services).
+// Resolve the SOAR template-cache bundle by glob, not a hardcoded hash — the
+// filename carries a build hash (templates.min.<hash>.js) that differs per SOAR
+// version, and `make assets` fetches whatever the connected box serves.
+function resolveTemplatesFile() {
+  const dir = path.resolve(__dirname, "..", "fsr_src");
+  if (!fs.existsSync(dir)) return null;
+  const match = fs
+    .readdirSync(dir)
+    .filter((f) => /^templates\.min\..+\.js$/.test(f))
+    .sort();
+  return match.length ? path.join(dir, match[match.length - 1]) : null;
+}
+
 app.get("/_fsr/templates.min.js", (_req, res) => {
   try {
-    const body = fs.readFileSync(
-      path.resolve(__dirname, "..", "fsr_src", "templates.min.a64ddbd8.js"),
-      "utf8"
-    );
+    const file = resolveTemplatesFile();
+    if (!file) {
+      return res
+        .status(404)
+        .type("text/plain")
+        .send("no fsr_src/templates.min.*.js — run `make assets` to fetch the SOAR app shell");
+    }
+    const body = fs.readFileSync(file, "utf8");
     // The dangling `||` in SOAR's ui-select-choices ng-show is intentional:
     // ui-select 0.20.0's link step appends `$select.open && $select.items.length > 0`,
     // completing the expression. Stripping the `||` leaves two expressions
