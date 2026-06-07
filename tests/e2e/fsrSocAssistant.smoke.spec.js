@@ -38,7 +38,7 @@ async function gotoWidget(page, scenario) {
     () => window.__fsrSocAssistant__ &&
           typeof window.__fsrSocAssistant__.state === 'string',
     null,
-    { timeout: 15000 }
+    { timeout: 30000 }
   );
   return errors;
 }

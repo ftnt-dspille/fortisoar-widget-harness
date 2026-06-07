@@ -25,8 +25,15 @@ module.exports = defineConfig({
   testIgnore: process.env.E2E_LIVE ? [] : ["**/*[Ll]ive*.spec.js"],
   timeout: 45000,
   expect: { timeout: 10000 },
-  retries: process.env.CI ? 1 : 0,
-  workers: 2,
+  // Two workers share one dev server and the widget boot (~15s wait) can starve
+  // under contention, so a transient boot-timeout must retry rather than hard-
+  // fail. `trace: "on-first-retry"` below captures the retried run.
+  retries: process.env.CI ? 2 : 1,
+  // 2 workers is the sweet spot: a single shared dev server serializes the heavy
+  // per-test app-shell boot, so >2 workers over-saturate it and cause mass boot
+  // timeouts (measured: 4 workers → 12 failed/14 flaky vs 2 workers → green).
+  // Live runs go serial to avoid hammering the real box.
+  workers: process.env.E2E_LIVE ? 1 : 2,
   fullyParallel: true,
   reporter: "list",
   // Tests run against a dedicated harness on port 14401 so they never collide

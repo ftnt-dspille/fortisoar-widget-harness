@@ -64,7 +64,7 @@ async function boot(page, scenario, opts) {
   await page.goto(urlFor(scenario, opts.extra), { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(
     () => window.__fsrSocAssistant__ && typeof window.__fsrSocAssistant__.state === 'string',
-    null, { timeout: 15000 }
+    null, { timeout: 30000 }
   );
 }
 
@@ -162,13 +162,13 @@ test.describe('Phase C — intent-aware layout', () => {
     await expect(buildBtn).toBeVisible();
 
     const intentChoice = page.locator('[data-testid="choice-intent-playbook"]');
-    await intentChoice.waitFor({ state: 'visible', timeout: 15000 });
+    await intentChoice.waitFor({ state: 'visible', timeout: 30000 });
     await intentChoice.click();
     const huntChoice = page.locator('[data-testid="choice-hunt_kind-ioc_sweep"]');
-    await huntChoice.waitFor({ state: 'visible', timeout: 15000 });
+    await huntChoice.waitFor({ state: 'visible', timeout: 30000 });
     await huntChoice.click();
 
-    await page.waitForFunction(() => window.__fsrSocAssistant__.currentYaml.length > 0, null, { timeout: 15000 });
+    await page.waitForFunction(() => window.__fsrSocAssistant__.currentYaml.length > 0, null, { timeout: 30000 });
     await expect(page.locator('[data-testid="yaml-pane"]')).toHaveCount(0);
 
     await buildBtn.click();

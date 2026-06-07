@@ -342,8 +342,13 @@ test.describe('Triage context interactions (Phase F)', () => {
   test.describe('3. Triage → playbook handoff (build-from-triage)', () => {
 
     test('handoff CTA bar appears after first user turn', async ({ page }) => {
-      const { consoleErrors } = await boot(page, 'playbook_soc_demo', {
-        entity: SAMPLE_INCIDENT, extra: '&opener=1'
+      // The "build-from-triage" handoff only surfaces in triage intent, once a
+      // real investigation op has run, AND the conversation has come to rest
+      // (no pending card) — see canBuildFromTriage. Use multi_tool (runs tools,
+      // ends at end_turn with no card) and NO opener, so the bar is absent until
+      // THIS test's user turn drives the investigation.
+      const { consoleErrors } = await boot(page, 'multi_tool', {
+        entity: SAMPLE_INCIDENT, cfg: { defaultIntent: 'triage' }
       });
 
       // Before any user turn: no handoff bar.
@@ -368,8 +373,12 @@ test.describe('Triage context interactions (Phase F)', () => {
     });
 
     test('clicking "Build playbook" flips intent to build, appends directive, fires turn', async ({ page }) => {
-      const { consoleErrors } = await boot(page, 'incident_smtp_intrusion', {
-        entity: SAMPLE_INCIDENT, extra: '&opener=1'
+      // Start in triage intent so the build-from-triage handoff is reachable
+      // (clicking it is what flips intent to build — see canBuildFromTriage).
+      // multi_tool runs investigation tools and ends at rest (no pending card),
+      // so the opener turn satisfies the handoff gate.
+      const { consoleErrors } = await boot(page, 'multi_tool', {
+        entity: SAMPLE_INCIDENT, extra: '&opener=1', cfg: { defaultIntent: 'triage' }
       });
 
       // Let the auto-seed complete (first assistant message).

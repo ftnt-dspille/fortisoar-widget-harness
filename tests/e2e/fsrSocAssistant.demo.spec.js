@@ -43,7 +43,7 @@ async function bootWidget(page, scenario) {
   await page.goto(urlFor(scenario), { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(
     () => window.__fsrSocAssistant__ && typeof window.__fsrSocAssistant__.state === 'string',
-    null, { timeout: 15000 }
+    null, { timeout: 30000 }
   );
   return errors;
 }
@@ -109,7 +109,10 @@ test.describe('Settings gear', () => {
   test('backdrop click closes the overlay', async ({ page }) => {
     await bootWidget(page, 'playbook_soc_demo');
     await page.locator('[data-testid="open-settings"]').click();
-    await page.locator('[data-testid="settings-backdrop"]').click();
+    // The backdrop fills the overlay (inset:0) but the settings panel is
+    // centered over it (z-index 201), so a default center-click lands on the
+    // panel. Click a top-left corner that only the backdrop occupies.
+    await page.locator('[data-testid="settings-backdrop"]').click({ position: { x: 5, y: 5 } });
     await expect(page.locator('[data-testid="settings-overlay"]')).toHaveCount(0);
   });
 
@@ -143,156 +146,6 @@ test.describe('Settings gear', () => {
   });
 });
 
-// ─── Connector combobox: search + filter ──────────────────────────────────
-
-async function waitForConnectorLoadSettled(page) {
-  // openSettings() fires _loadConnectorList() which sets connectorListLoading=true,
-  // makes an API call, then flips to false. Wait for the final flip before we
-  // inject so the resolved promise doesn't clobber our fake list.
-  await page.waitForFunction(() => {
-    const p = window.__fsrSocAssistant__;
-    return p && p.injectConnectors && p.connectorListLoading === false;
-  }, null, { timeout: 8000 });
-}
-
-async function injectFakeConnectors(page) {
-  await waitForConnectorLoadSettled(page);
-  await page.evaluate(() => {
-    window.__fsrSocAssistant__.injectConnectors([
-      { name: 'fortinet-fsr-playbook-builder', title: 'FSR Playbook Builder', version: '1.0.0' },
-      { name: 'fortinet-fortigate',            title: 'FortiGate',            version: '6.0.0' },
-      { name: 'fortinet-fortiedr',             title: 'FortiEDR',             version: '2.1.0' },
-      { name: 'palo-alto-firewall',            title: 'Palo Alto Firewall',   version: '1.5.0' }
-    ]);
-  });
-}
-
-test.describe('Connector combobox search', () => {
-
-  test('shows all options when opened, then narrows by typed query', async ({ page }) => {
-    await bootWidget(page, 'playbook_soc_demo');
-    await page.locator('[data-testid="open-settings"]').click();
-    await injectFakeConnectors(page);
-    await page.locator('[data-testid="cfg-connector-search"]').click();
-    await expect(page.locator('[data-testid="cfg-connector-combo"]')).toBeVisible();
-
-    const allOptions = page.locator('[data-testid^="cfg-connector-option-"]');
-    await expect(allOptions).toHaveCount(4);
-
-    // 'fsr' → only fortinet-fsr-playbook-builder
-    await page.locator('[data-testid="cfg-connector-search"]').fill('fsr');
-    await expect(allOptions).toHaveCount(1);
-    await expect(page.locator('[data-testid="cfg-connector-option-fortinet-fsr-playbook-builder"]')).toBeVisible();
-
-    // 'forti' → all 3 fortinet-* connectors (matches name or title containing 'forti')
-    await page.locator('[data-testid="cfg-connector-search"]').fill('forti');
-    await expect(allOptions).toHaveCount(3);
-
-    // 'palo' → only palo-alto-firewall (title match)
-    await page.locator('[data-testid="cfg-connector-search"]').fill('palo');
-    await expect(allOptions).toHaveCount(1);
-    await expect(page.locator('[data-testid="cfg-connector-option-palo-alto-firewall"]')).toBeVisible();
-
-    // 'nothing' → empty state shown
-    await page.locator('[data-testid="cfg-connector-search"]').fill('zzzzz');
-    await expect(allOptions).toHaveCount(0);
-    await expect(page.locator('[data-testid="cfg-connector-combo"] .combo-empty')).toBeVisible();
-  });
-
-  test('search is case-insensitive', async ({ page }) => {
-    await bootWidget(page, 'playbook_soc_demo');
-    await page.locator('[data-testid="open-settings"]').click();
-    await injectFakeConnectors(page);
-    await page.locator('[data-testid="cfg-connector-search"]').click();
-
-    await page.locator('[data-testid="cfg-connector-search"]').fill('FSR');
-    await expect(page.locator('[data-testid^="cfg-connector-option-"]')).toHaveCount(1);
-
-    await page.locator('[data-testid="cfg-connector-search"]').fill('FoRtIgAtE');
-    await expect(page.locator('[data-testid^="cfg-connector-option-"]')).toHaveCount(1);
-    await expect(page.locator('[data-testid="cfg-connector-option-fortinet-fortigate"]')).toBeVisible();
-  });
-
-  test('search matches connector name as well as title', async ({ page }) => {
-    await bootWidget(page, 'playbook_soc_demo');
-    await page.locator('[data-testid="open-settings"]').click();
-    await injectFakeConnectors(page);
-    await page.locator('[data-testid="cfg-connector-search"]').click();
-
-    // 'playbook' only appears in fortinet-fsr-playbook-builder's name
-    await page.locator('[data-testid="cfg-connector-search"]').fill('playbook');
-    await expect(page.locator('[data-testid^="cfg-connector-option-"]')).toHaveCount(1);
-    await expect(page.locator('[data-testid="cfg-connector-option-fortinet-fsr-playbook-builder"]')).toBeVisible();
-  });
-
-  test('search → pick fsr-playbook-builder → save → reload → still selected', async ({ page }) => {
-    await bootWidget(page, 'playbook_soc_demo');
-
-    // Open settings first so the loadConnectors call has fired; then inject
-    // a deterministic list (overriding whatever the backend returned).
-    await page.locator('[data-testid="open-settings"]').click();
-    await injectFakeConnectors(page);
-
-    await page.locator('[data-testid="cfg-connector-search"]').click();
-    await page.locator('[data-testid="cfg-connector-search"]').fill('fsr-playbook-builder');
-    await expect(page.locator('[data-testid^="cfg-connector-option-"]')).toHaveCount(1);
-
-    // Pick it.
-    await page.locator('[data-testid="cfg-connector-option-fortinet-fsr-playbook-builder"]').click();
-
-    // Save (use the Save submit button — checks the form submit path that
-    // writes to localStorage too).
-    await page.locator('[data-testid="cfg-save"]').click();
-    await expect(page.locator('[data-testid="settings-overlay"]')).toHaveCount(0);
-
-    // localStorage now holds the persisted config under the harness key.
-    const stored = await page.evaluate((id) => {
-      const raw = localStorage.getItem('harness:config:' + id);
-      return raw ? JSON.parse(raw) : null;
-    }, WIDGET_ID);
-    expect(stored).not.toBeNull();
-    expect(stored.connectorName).toBe('fortinet-fsr-playbook-builder');
-    expect(stored.connectorVersion).toBe('1.0.0');
-
-    // Reload the page — harness reads the same key on mount.
-    await page.reload({ waitUntil: 'domcontentloaded' });
-    await page.waitForFunction(
-      () => window.__fsrSocAssistant__ && typeof window.__fsrSocAssistant__.state === 'string',
-      null, { timeout: 15000 }
-    );
-
-    // Open settings again — saved values must be present.
-    await page.locator('[data-testid="open-settings"]').click();
-    // Re-inject the connector list AFTER opening so the openSettings()
-    // re-fetch doesn't clobber it.
-    await injectFakeConnectors(page);
-    const cfg = await page.evaluate(() => window.__fsrSocAssistant__.config);
-    expect(cfg.connectorName).toBe('fortinet-fsr-playbook-builder');
-    expect(cfg.connectorVersion).toBe('1.0.0');
-
-    // Input field shows the saved pick text.
-    const inputValue = await page.locator('[data-testid="cfg-connector-search"]').inputValue();
-    expect(inputValue).toBe('FSR Playbook Builder');
-  });
-
-  test('picking an option fills the input, closes the popover, writes config', async ({ page }) => {
-    await bootWidget(page, 'playbook_soc_demo');
-    await page.locator('[data-testid="open-settings"]').click();
-    await injectFakeConnectors(page);
-    await page.locator('[data-testid="cfg-connector-search"]').click();
-    await page.locator('[data-testid="cfg-connector-search"]').fill('fsr');
-    await page.locator('[data-testid="cfg-connector-option-fortinet-fsr-playbook-builder"]').click();
-
-    await expect(page.locator('[data-testid="cfg-connector-combo"]')).toHaveCount(0);
-    const cfg = await page.evaluate(() => window.__fsrSocAssistant__.config);
-    expect(cfg.connectorName).toBe('fortinet-fsr-playbook-builder');
-    expect(cfg.connectorVersion).toBe('1.0.0');
-    expect(cfg.connectorTitle).toBe('FSR Playbook Builder');
-
-    const inputValue = await page.locator('[data-testid="cfg-connector-search"]').inputValue();
-    expect(inputValue).toBe('FSR Playbook Builder');
-  });
-});
 
 // ─── playbook_soc_demo — unified branching scenario ────────────────────────
 

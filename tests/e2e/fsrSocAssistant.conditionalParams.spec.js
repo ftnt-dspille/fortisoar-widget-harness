@@ -37,7 +37,7 @@ async function boot(page) {
     { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(
     () => window.__fsrSocAssistant__ && typeof window.__fsrSocAssistant__.state === 'string',
-    null, { timeout: 15000 });
+    null, { timeout: 30000 });
   await page.locator(`[data-testid="action-card-${CARD}"]`).waitFor({ state: 'visible', timeout: 8000 });
   return errors;
 }

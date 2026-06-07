@@ -25,7 +25,7 @@ async function gotoWidget(page) {
   await page.waitForFunction(
     () => window.__fsrSocAssistant__ &&
           typeof window.__fsrSocAssistant__.state === 'string',
-    null, { timeout: 15000 });
+    null, { timeout: 30000 });
   return errors;
 }
 
