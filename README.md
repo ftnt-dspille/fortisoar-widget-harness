@@ -37,8 +37,27 @@ WIDGET=helloCounter npm test          # jest unit test (controller logic)
 npm run test:e2e                      # playwright DOM test (boots its own harness)
 ```
 
-Copy `examples/helloCounter/` into `widgets-src/` (or your `WIDGETS_SRC`) as the
-starting point for your own widget — then `widget rename`, edit, `widget push`.
+Scaffold your own widget with one command (fills in controller names, testids,
+and the e2e spec correctly — see `widget-template/`):
+
+```bash
+scripts/new-widget.sh incidentSummary "Incident Summary"   # or: npm run new-widget …
+```
+
+To rename an existing widget instead, use `node scripts/widget.js rename`.
+
+### SOAR app shell (required for e2e)
+
+The harness renders widgets inside the real FortiSOAR app bundle, served from
+`fsr_src/`. Those are Fortinet platform assets we don't redistribute — fetch
+them once from your own licensed box:
+
+```bash
+npm run assets        # downloads app.unmin.js + templates from FSR_BASE_URL into fsr_src/
+```
+
+Unit tests don't need this; e2e does (without it, widgets won't render and e2e
+fails with a `/_fsr/templates.min.js` 500).
 
 > **Safety:** the proxy disables TLS verification and strips upstream CSP so
 > local dev works. Point `.env` at a **lab** box only — never production.
@@ -182,15 +201,18 @@ widgets-src/       # default discovery root if WIDGETS_SRC isn't set
 ## Tests
 
 **All testing runs locally — no FortiSOAR login required.** Unit tests run under
-jsdom against stubbed platform services; e2e tests run against the harness's
-mocked `/api` proxy. You only need real credentials for the opt-in live suite.
+jsdom against stubbed platform services; e2e tests mock the `/api` data proxy
+per spec. Unit tests need nothing extra. **e2e additionally needs the SOAR app
+shell** (`fsr_src/`) to render widgets in a browser — run `npm run assets` once
+to fetch it from your own licensed box (see "SOAR app shell" below).
 
 ```bash
 npm test                          # jest: harness suites only (fast default)
 WIDGET=helloCounter npm test      # + the example widget's unit tests
 WIDGET=all npm test               # + every discovered widget with a tests/ dir
 
-npm run test:e2e                  # playwright, FULLY LOCAL (mocked SOAR)
+npm run assets                    # once: fetch the SOAR app shell for e2e
+npm run test:e2e                  # playwright (data /api is mocked per spec)
 npm run test:e2e:live             # opt-in: drives a real box (needs .env creds)
 
 npm run lint                      # oxlint + eslint + test-id + angular lints
@@ -200,8 +222,10 @@ npm run lint                      # oxlint + eslint + test-id + angular lints
   each widget's `tests/` run under jsdom with its own `jest.config.js`. Widget
   tests are opt-in via `WIDGET=<name|all>` so a default run stays fast.
 - **e2e** (`playwright`) — boots its own harness on `:14401` and mocks `/api`
-  per spec, so the default suite needs no login. Specs whose filename contains
-  `Live`/`live` drive a real FortiSOAR and are excluded unless `E2E_LIVE=1`.
+  data per spec, so no login is needed; but the widget renders inside the real
+  SOAR app shell, so `npm run assets` must have populated `fsr_src/` first.
+  Specs whose filename contains `Live`/`live` drive a real FortiSOAR and are
+  excluded unless `E2E_LIVE=1`.
 - The bundled `examples/helloCounter` widget is always discoverable for both
   unit and e2e, even when `WIDGETS_SRC` is pinned — so a clone can self-test.
 
@@ -241,8 +265,10 @@ This repo is driven by AI agents. Durable references, in order:
 1. **`docs/KNOWLEDGEBASE.md`** — how to build FortiSOAR 7.x widgets (lifecycle,
    drawer mechanics, platform services, packaging, 60-widget gotcha catalog).
    Consult before changing any widget; add new platform gotchas back into it.
-2. **`docs/FortiSOAR-7.6.5-Widget_Development.pdf`** — Fortinet's official widget
-   development guide (reference; the KNOWLEDGEBASE distills + extends it).
+2. **Fortinet's official widget development guide** (`FortiSOAR-7.6.5-Widget_Development.pdf`)
+   — reference; the KNOWLEDGEBASE distills + extends it. Not redistributed with
+   the kit (Fortinet copyrighted); download it from the Fortinet docs portal /
+   your licensed FortiSOAR instance and drop it in `docs/`.
 3. **`examples/helloCounter/`** — a minimal, working widget (view + edit
    controllers, jest + e2e tests) to read or copy as a starting point.
 4. **This README + `widget --help`** — the harness operations surface.

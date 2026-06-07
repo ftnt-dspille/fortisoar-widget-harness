@@ -37,7 +37,16 @@ const { host: HOST, user: USER, pass: PASS } = resolveSoarEnv();
 let PROXY_VERBOSE = process.env.PROXY_VERBOSE === "1";
 
 const HARNESS_MODULE_PATH = path.resolve(__dirname, "harness.module.js");
-const FSR_APP_PATH_FOR_LINT = path.resolve(__dirname, "..", "fsr_src", "app.unmin.js");
+
+// Where the FortiSOAR app shell (app.unmin.js + extracted templates) lives.
+// Monorepo: a sibling `../fsr_src`. Standalone clone: `<harness>/fsr_src`,
+// populated by `npm run assets` (scripts/fetch-soar-assets.sh). Prefer the
+// monorepo sibling when present so we don't duplicate the ~200M reference set.
+const FSR_SRC_DIR =
+  [path.resolve(__dirname, "..", "fsr_src"), path.resolve(__dirname, "fsr_src")].find(
+    (d) => fs.existsSync(d)
+  ) || path.resolve(__dirname, "fsr_src");
+const FSR_APP_PATH_FOR_LINT = path.join(FSR_SRC_DIR, "app.unmin.js");
 // Services registered by the SOAR bundle; parsed once at startup. The bundle
 // is large (~2.5MB) so we don't watch/re-parse it. These ship to SOAR for real.
 const FSR_BUNDLE_SERVICES = (() => {
@@ -645,7 +654,7 @@ app.use(
 // hit the live host for assets we haven\'t extracted.
 app.use(
   "/app",
-  express.static(path.resolve(__dirname, "..", "fsr_src", "templates-extracted", "app"), {
+  express.static(path.join(FSR_SRC_DIR, "templates-extracted", "app"), {
     etag: false,
     cacheControl: false,
     fallthrough: true,
@@ -655,7 +664,7 @@ app.use(
 // Serve fsr_src/app.unmin.js with the cybersponse module's dep array stripped
 // so the harness can register an empty cybersponse module without dragging in
 // ~50 vendor/fortisoar.* sub-modules. The on-disk file stays pristine.
-const FSR_APP_PATH = path.resolve(__dirname, "..", "fsr_src", "app.unmin.js");
+const FSR_APP_PATH = path.join(FSR_SRC_DIR, "app.unmin.js");
 let FSR_APP_PATCHED = null;
 function loadPatchedFsrApp() {
   if (FSR_APP_PATCHED) return FSR_APP_PATCHED;
@@ -779,7 +788,7 @@ app.get("/_fsr/app.unmin.js", (_req, res) => {
 // filename carries a build hash (templates.min.<hash>.js) that differs per SOAR
 // version, and `make assets` fetches whatever the connected box serves.
 function resolveTemplatesFile() {
-  const dir = path.resolve(__dirname, "..", "fsr_src");
+  const dir = FSR_SRC_DIR;
   if (!fs.existsSync(dir)) return null;
   const match = fs
     .readdirSync(dir)

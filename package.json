@@ -19,6 +19,8 @@
     "lint:eslint": "eslint --resolve-plugins-relative-to . --ext .js $(for d in widgets-src examples; do [ -e \"$d\" ] && echo \"$d\"; done)",
     "lint": "npm run lint:js && npm run lint:eslint && npm run lint:testids && npm run lint:angular",
     "widget": "node scripts/widget.js",
+    "assets": "bash scripts/fetch-soar-assets.sh",
+    "new-widget": "bash scripts/new-widget.sh",
     "login": "node scripts/widget.js login",
     "list": "node scripts/widget.js list",
     "remote-list": "node scripts/widget.js remote-list",

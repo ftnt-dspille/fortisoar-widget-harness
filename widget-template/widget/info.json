@@ -1,0 +1,28 @@
+{
+  "name": "myWidget",
+  "title": "My Widget",
+  "subTitle": "One-line description shown in the widget picker.",
+  "version": "1.0.0",
+  "published_date": 1748908800,
+  "releaseNotes": "Initial scaffold.",
+  "development": true,
+  "metadata": {
+    "description": "What this widget renders and how it's configured.",
+    "publisher": "Your Team",
+    "certified": "No",
+    "compatibility": [
+      "7.6.0"
+    ],
+    "snapshots": [],
+    "category": [
+      "Utilities"
+    ],
+    "pages": [
+      "Dashboard",
+      "View Panel"
+    ],
+    "standalone": false,
+    "windowClass": "Full Width",
+    "size": "lg"
+  }
+}

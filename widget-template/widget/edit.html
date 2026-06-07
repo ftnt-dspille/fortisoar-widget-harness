@@ -1,0 +1,11 @@
+<!-- EDIT template — the config form. Bind to object properties (config.X), never
+     bare words: ng-include/ng-if/ng-repeat create child scopes and a bare
+     ng-model writes shadow the parent. See KNOWLEDGEBASE.md. -->
+<div class="my-widget-edit">
+  <div class="form-group">
+    <label for="my-widget-title">Title</label>
+    <input id="my-widget-title" type="text" class="form-control"
+           data-testid="my-widget-cfg-title"
+           data-ng-model="config.title" />
+  </div>
+</div>

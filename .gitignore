@@ -19,6 +19,10 @@ dev/cache/
 # committed examples/). Never track it — a tracked symlink dangles on clone.
 /widgets-src
 
+# FortiSOAR app shell fetched by `npm run assets` (Fortinet platform JS — each
+# dev fetches it from their own licensed box; never committed).
+/fsr_src
+
 # OS
 .DS_Store
 ._*
