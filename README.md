@@ -109,7 +109,7 @@ widget <cmd> [<widget-folder>] [flags]
 | `pull <uuid\|name\|title> [--folder <slug>]` | **Download** a widget from SOAR into `widgets-src/` |
 | `rename <id> --title "New Title" [--name <override>]` | Rename a widget on disk; `name` auto-derived from title |
 
-`<id>` is the widget folder name (e.g. `fsrPlaybookBuilder`) — a trailing
+`<id>` is the widget folder name (e.g. `incidentSummary`) — a trailing
 `-x.y.z` version is accepted and stripped.
 
 ### Typical loops
@@ -117,20 +117,20 @@ widget <cmd> [<widget-folder>] [flags]
 ```bash
 # Iterate + deploy a change
 npm run dev                                   # leave running
-node scripts/widget.js lint  fsrPlaybookBuilder
-node scripts/widget.js push  fsrPlaybookBuilder --bump patch
+node scripts/widget.js lint  incidentSummary
+node scripts/widget.js push  incidentSummary --bump patch
 
 # Bring an existing SOAR widget down to hack on it
 node scripts/widget.js remote-list
 node scripts/widget.js pull "Card View"       # or pull <uuid>
 
 # Rename a widget (source only; see note below before touching the box)
-node scripts/widget.js rename fsrPlaybookBuilder --title "FSR Playbook Composer"
+node scripts/widget.js rename incidentSummary --title "Incident Summary Pro"
 ```
 
 **Renaming + the box:** SOAR keys an installed widget by its `name`, so a
 renamed widget `push`es as a *new* widget (new uuid) and leaves the old one
-installed. `rename` only changes source; reconciling the box (delete the old
+installed (the old `name` stays registered). `rename` only changes source; reconciling the box (delete the old
 one, or migrate) is a deliberate follow-up step.
 
 ---
@@ -265,14 +265,13 @@ This repo is driven by AI agents. Durable references, in order:
 1. **`docs/KNOWLEDGEBASE.md`** — how to build FortiSOAR 7.x widgets (lifecycle,
    drawer mechanics, platform services, packaging, 60-widget gotcha catalog).
    Consult before changing any widget; add new platform gotchas back into it.
-2. **Fortinet's official widget development guide** (`FortiSOAR-7.6.5-Widget_Development.pdf`)
-   — reference; the KNOWLEDGEBASE distills + extends it. Not redistributed with
-   the kit (Fortinet copyrighted); download it from the Fortinet docs portal /
-   your licensed FortiSOAR instance and drop it in `docs/`.
+2. **Fortinet's official widget development guide** — reference; the KNOWLEDGEBASE
+   distills + extends it. Not redistributed (Fortinet copyrighted); see
+   `docs/FortiSOAR-Widget-Development-Guide.md` for how to obtain it.
 3. **`examples/helloCounter/`** — a minimal, working widget (view + edit
    controllers, jest + e2e tests) to read or copy as a starting point.
 4. **This README + `widget --help`** — the harness operations surface.
 
-Run tests only through the documented targets (`npm test`, the project-root
-`make` targets). Start the server with `npm run dev` — never hand-run a second
-`node server.js` on top of a running one.
+Run tests only through the documented npm targets (`npm test`, `npm run test:e2e`).
+Start the server with `npm run dev` — never hand-run a second `node server.js`
+on top of a running one.
