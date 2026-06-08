@@ -41,3 +41,10 @@ Thumbs.db
 # Playwright
 test-results/
 playwright-report/
+
+# Proprietary / non-redistributable: Fortinet's copyrighted dev-guide PDF.
+# Obtain from your own licensed source; see docs/FortiSOAR-Widget-Development-Guide.md
+docs/*.pdf
+
+# Internal connector/widget design docs — not shipped with the public harness
+FSR_PLAYBOOK_BUILDER_*
